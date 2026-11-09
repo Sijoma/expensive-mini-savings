@@ -103,7 +103,9 @@ export class EmsHistoryView extends LitElement {
         ${rows.length
           ? html`<ems-chart .option=${this.chart} .height=${360}></ems-chart>
               <div class="small muted" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px">
-                ${["n", "h", "l", "f", "v"].map(
+                ${["n", "h", "l", "f", "e", "v"]
+                  .filter((c) => rows.some((r) => r.aktion === c || r.plan_aktion === c))
+                  .map(
                   (c) =>
                     html`<span
                       ><i
@@ -116,10 +118,12 @@ export class EmsHistoryView extends LitElement {
                 <span
                   ><i style="display:inline-block;width:10px;height:3px;background:${COLORS.soc}"></i> Akku gemessen</span
                 >
-                <span
-                  ><i style="display:inline-block;width:10px;height:3px;background:${COLORS.socWithout}"></i> Akku laut
-                  Plan</span
-                >
+                ${rows.some((r) => r.plan_soc != null)
+                  ? html`<span
+                      ><i style="display:inline-block;width:10px;height:3px;background:${COLORS.socWithout}"></i> Akku
+                      laut Plan</span
+                    >`
+                  : nothing}
               </div>`
           : html`<div class="muted">
               Für diesen Tag gibt es keine Messung. Die Integration zeichnet jede Viertelstunde auf, wenn
@@ -150,7 +154,7 @@ export class EmsHistoryView extends LitElement {
             <p class="muted small">
               „Geplant“ ist die Aktion aus dem letzten stündlich aufgezeichneten Plan vor der Viertelstunde
               (${this.data?.plaene ?? 0} Pläne). Abweichungen sind normal, wenn du anders entschieden hast
-              (Freigabe, Modus) oder ein Anbieter wie Tibber VPP den Akku gesteuert hat.
+              (Freigabe, Modus) oder etwas anderes den Akku gesteuert hat.
             </p>
           </div>`
         : nothing}

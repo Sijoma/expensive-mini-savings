@@ -79,6 +79,18 @@ export class EmsPanel extends LitElement {
       nav button ha-icon {
         --mdc-icon-size: 18px;
       }
+      .badge {
+        min-width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: var(--error-color, #db4437);
+        color: #fff;
+        font-size: 0.75rem;
+        display: inline-grid;
+        place-items: center;
+        padding: 0 4px;
+        box-sizing: border-box;
+      }
       nav button[aria-selected="true"] {
         color: var(--primary-color);
         border-bottom-color: var(--primary-color);
@@ -121,6 +133,13 @@ export class EmsPanel extends LitElement {
     }
   }
 
+  /** Number of plan blocks waiting for approval. */
+  private pending(): number {
+    const id = this.config?.entitaeten.freigabe;
+    const e = id ? this.hass?.states[id] : undefined;
+    return e?.state === "on" ? (e.attributes.aktionen?.length ?? 1) : 0;
+  }
+
   private select(tab: Tab): void {
     this.tab = tab;
     history.replaceState(null, "", `#${tab}`);
@@ -137,6 +156,9 @@ export class EmsPanel extends LitElement {
             (t) =>
               html`<button role="tab" aria-selected=${this.tab === t.id} @click=${() => this.select(t.id)}>
                 <ha-icon icon=${t.icon}></ha-icon><span>${t.name}</span>
+                ${t.id === "plan" && this.pending()
+                  ? html`<span class="badge" title="wartet auf Freigabe">${this.pending()}</span>`
+                  : nothing}
               </button>`,
           )}
         </nav>

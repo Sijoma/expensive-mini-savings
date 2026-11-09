@@ -126,7 +126,7 @@ export class EmsLogView extends LitElement {
       <h2><ha-icon icon="mdi:format-list-bulleted"></ha-icon>Logbuch</h2>
       <p class="muted small">
         Jede Änderung an Modus, Soll, Wechselrichter und Freigaben – und wer sie ausgelöst hat. Gelb: Änderung am
-        Wechselrichter ohne EMS-Befehl kurz davor – also von außen (z. B. VPP, Hersteller-App, von Hand).
+        Wechselrichter ohne EMS-Befehl kurz davor – also von außen (z. B. Hersteller-App, Stromanbieter, von Hand).
       </p>
       <div class="ranges">
         ${RANGES.map(
@@ -248,7 +248,7 @@ export class EmsLogView extends LitElement {
               <li>Sperren ab 30 min, Netzladen ab 15 min, nur Aktionen ab 5 ct Ersparnis.</li>
               <li>Sperren = Entladeleistung fast 0, die PV lädt weiter; danach zurück auf das Maximum.</li>
               <li>Plan älter als 30 min → Eigenverbrauch.</li>
-              <li>Fremde Einstellung am Wechselrichter (z. B. VPP) → das EMS greift nicht ein.</li>
+              <li>Fremde Einstellung am Wechselrichter → das EMS greift nicht ein.</li>
               <li>Jeder Befehl wird nach 60 s geprüft, Fehler kommen per Push.</li>
             </ul>
           </div>`

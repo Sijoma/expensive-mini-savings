@@ -7,7 +7,7 @@ export const ACTIONS: Record<string, { name: string; short: string; icon: string
   l: { name: "Laden aus dem Netz", short: "Netzladen", icon: "mdi:transmission-tower-import", color: "#d95926" },
   f: { name: "Stopp (Forced)", short: "Stopp", icon: "mdi:battery-lock", color: "#6aa6ef" },
   e: { name: "Erzwungenes Entladen", short: "Entladen", icon: "mdi:battery-arrow-down", color: "#8e44ad" },
-  v: { name: "VPP (Anbieter steuert)", short: "VPP", icon: "mdi:cloud-sync", color: "#c0392b" },
+  v: { name: "Anbieter steuert", short: "Anbieter", icon: "mdi:cloud-sync", color: "#c0392b" },
 };
 
 export const NAME_TO_CODE: Record<string, string> = Object.fromEntries(
