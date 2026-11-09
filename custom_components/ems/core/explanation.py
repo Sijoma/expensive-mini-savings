@@ -133,8 +133,8 @@ def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tari
         if action is Action.HOLD:
             grid = sum(s.import_kwh for s in steps)
             reason = (
-                f"Strom jetzt {price:.0f} ct aus dem Netz, der Akku hebt auf {purpose}. "
-                f"1 kWh im Akku spart später ≈ {w:.0f} ct, jetzt nur ≈ {now:.0f} ct"
+                f"Strom aus dem Netz kostet in dieser Zeit {price:.0f} ct. Der Akku hebt seine Ladung auf "
+                f"{purpose}: 1 kWh daraus spart dann ≈ {w:.0f} ct, in dieser Zeit nur ≈ {now:.0f} ct"
             )
         else:
             grid = sum(s.grid_charged_kwh for s in steps)

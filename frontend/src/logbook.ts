@@ -1,5 +1,6 @@
 // Logbook entries of the executor entities: what changed and who caused it.
 
+import { plainState, plainText } from "./texts";
 import type { HomeAssistant } from "./types";
 
 export interface LogbookEntry {
@@ -51,7 +52,7 @@ export function cause(e: LogbookEntry, userId?: string): { by: string; kind: str
     return { by: e.context_entity_id_name ?? e.context_entity_id!, kind: "entity" };
   if (e.context_domain && e.context_service)
     return { by: `${e.context_domain}.${e.context_service}`, kind: "service" };
-  return { by: "Vorlage / Integration", kind: "device" };
+  return { by: "automatisch berechnet", kind: "device" };
 }
 
 const OUTAGE = new Set(["unavailable", "unknown"]);
@@ -87,16 +88,16 @@ export function logbookRows(
       last.set(entity, e.state);
     }
     const message = script && e.message === "started" ? "gestartet" : e.message;
-    const what = message ?? (e.state != null ? `→ ${e.state}` : "");
+    const what = message ? plainText(message) : e.state != null ? `→ ${plainState(e.state)}` : "";
     rows.push({ ms, entity, name: e.name ?? entity, what, ...cause(e, userId) });
   }
   const actions = rows.filter((r) => r.kind === "automation" || r.kind === "user").map((r) => r.ms);
   for (const r of rows) {
     if (!inverter.has(r.entity) || r.kind === "automation" || r.kind === "user") continue;
-    if (r.what.endsWith("→ unavailable") || r.what.endsWith("→ unknown")) continue;
+    if (r.what === `→ ${plainState("unavailable")}` || r.what === `→ ${plainState("unknown")}`) continue;
     const ems = actions.some((t) => t <= r.ms + 5_000 && t >= r.ms - EXTERNAL_WINDOW_MS);
     if (ems) r.by = "Wechselrichter, nach EMS-Befehl";
-    else Object.assign(r, { kind: "external", by: "von außen – nicht vom EMS" });
+    else Object.assign(r, { kind: "external", by: "von außen, nicht vom EMS" });
   }
   return rows.reverse();
 }

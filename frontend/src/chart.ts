@@ -38,6 +38,8 @@ export class EmsChart extends LitElement {
   @property({ attribute: false }) option?: ChartOption;
   @property({ type: Number }) height = 300;
   @property({ type: Boolean }) dark = false;
+  /** Text alternative for screen readers (what the chart shows, in one or two sentences). */
+  @property() label = "";
 
   private chart?: echarts.ECharts;
   private resizer?: ResizeObserver;
@@ -53,7 +55,7 @@ export class EmsChart extends LitElement {
   `;
 
   render() {
-    return html`<div style="height:${this.height}px"></div>`;
+    return html`<div style="height:${this.height}px" role="img" aria-label=${this.label || "Diagramm"}></div>`;
   }
 
   protected firstUpdated(): void {

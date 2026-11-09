@@ -73,7 +73,7 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
       {
         xAxis: now,
         lineStyle: { color: accent, type: "dashed", width: 1.5 },
-        label: { formatter: "Jetzt", position: "insideEndTop", color: accent, textBorderWidth: 0, fontSize: 10 },
+        label: { show: false },
       },
       ...dayLines(first, last),
     ],
@@ -102,7 +102,7 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         const wp = s[6] === "pv" ? "<br>Wärmepumpe: PV-Boost" : "";
         return (
           `<b>${when(s[0])}–${time(s[0] + QUARTER_MS)}</b><br>` +
-          `<span style="color:${a.color}">●</span> ${a.name} · ${ct(s[1])}${charge}<br>` +
+          `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${a.color}"></span>${a.name} · ${ct(s[1])}${charge}<br>` +
           `1 kWh im Akku: ${ct(s[8])}<br>` +
           `Akku: ${s[4]} % (ohne Plan ${s[9]} %)<br>` +
           `PV ${num(s[2], 2)} kW · Verbrauch ${num(s[3], 2)} kW${wp}`
@@ -170,7 +170,7 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         markArea: {
           silent: true,
           itemStyle: { color: COLORS.boost, opacity: 0.14 },
-          label: { show: true, position: "insideTop", formatter: "Boost", color: COLORS.boost, fontSize: 10 },
+          label: { show: true, position: "insideTop", formatter: "PV-Boost", color: COLORS.boost, fontSize: 10 },
           data: boost.map(([a, b]) => [{ xAxis: a }, { xAxis: b }]),
         },
       },
@@ -315,8 +315,7 @@ export function savingsOption(days: string[], measured: (number | null)[], forec
     forecast = forecast.slice(first);
   }
   return {
-    grid: { top: 36, left: 44, right: 12, bottom: 28 },
-    legend: { top: 0, data: ["Gemessen", "Prognose"] },
+    grid: { top: 28, left: 44, right: 12, bottom: 28 },
     tooltip: {
       trigger: "axis",
       valueFormatter: (v: number | null) => (v == null ? "–" : `${num(v, 2)} €`),

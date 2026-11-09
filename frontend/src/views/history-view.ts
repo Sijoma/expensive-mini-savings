@@ -82,9 +82,11 @@ export class EmsHistoryView extends LitElement {
             border: 1px solid var(--divider-color);
             color: var(--primary-text-color);
             border-radius: 999px;
-            width: 36px;
-            height: 36px;
+            width: 44px;
+            height: 44px;
             cursor: pointer;
+            display: grid;
+            place-items: center;
           }
           .nav button:disabled {
             opacity: 0.4;
@@ -94,14 +96,20 @@ export class EmsHistoryView extends LitElement {
         <h2><ha-icon icon="mdi:history"></ha-icon>Plan und Wirklichkeit</h2>
         <div class="nav">
           <button aria-label="Tag zurück" ?disabled=${!!first && this.day <= first} @click=${() => this.move(-1)}>
-            ‹
+            <ha-icon icon="mdi:chevron-left"></ha-icon>
           </button>
           <span class="day">${label}</span>
-          <button aria-label="Tag vor" ?disabled=${this.day >= today} @click=${() => this.move(1)}>›</button>
+          <button aria-label="Tag vor" ?disabled=${this.day >= today} @click=${() => this.move(1)}>
+            <ha-icon icon="mdi:chevron-right"></ha-icon>
+          </button>
         </div>
         ${this.error ? html`<div class="warn error">${this.error}</div>` : nothing}
         ${rows.length
-          ? html`<ems-chart .option=${this.chart} .height=${360}></ems-chart>
+          ? html`<ems-chart
+                .option=${this.chart}
+                .height=${360}
+                .label=${`Plan und Wirklichkeit am ${label}: ${s.same} von ${s.withPlan} Viertelstunden liefen wie geplant, Netzbezug ${num(s.importKwh, 1)} kWh.`}
+              ></ems-chart>
               <div class="small muted" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px">
                 ${["n", "h", "l", "f", "e", "v"]
                   .filter((c) => rows.some((r) => r.aktion === c || r.plan_aktion === c))
@@ -152,9 +160,8 @@ export class EmsHistoryView extends LitElement {
               </div>
             </div>
             <p class="muted small">
-              „Geplant“ ist die Aktion aus dem letzten stündlich aufgezeichneten Plan vor der Viertelstunde
-              (${this.data?.plaene ?? 0} Pläne). Abweichungen sind normal, wenn du anders entschieden hast
-              (Freigabe, Modus) oder etwas anderes den Akku gesteuert hat.
+              „Geplant“ ist, was der Plan kurz vor der jeweiligen Viertelstunde vorgesehen hatte. Abweichungen sind
+              normal, wenn du anders entschieden hast (Freigabe, Modus) oder etwas anderes den Akku gesteuert hat.
             </p>
           </div>`
         : nothing}

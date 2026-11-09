@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { QUARTER_MS, historyOption, intervals, midnights, planOption, savingsOption } from "../src/options";
 import { summary } from "../src/views/history-view";
 import { cause, logbookRows } from "../src/logbook";
+import { plainState, plainText } from "../src/texts";
+import { day, eur, num } from "../src/format";
+import { decisions } from "../src/views/log-view";
+import { blockSentence, chartSummary } from "../src/views/plan-view";
 import type { HistoryRow, SlotRow } from "../src/types";
 
 const T0 = Date.parse("2026-11-09T22:00:00+01:00");
@@ -118,7 +122,7 @@ describe("logbook", () => {
     ]);
     expect(rows).toHaveLength(2);
     expect(rows[0].what).toBe("changed to VPP");
-    expect(rows[1].what).toBe("→ Self-consumption mode (default)");
+    expect(rows[1].what).toBe("→ Eigenverbrauch");
   });
 });
 
@@ -132,7 +136,7 @@ describe("logbook filter", () => {
   });
   it("hides connection drops and the return to the same state", () => {
     const entries = [e(0, "Self"), e(1, "unavailable"), e(2, "Self"), e(3, "VPP"), e(4, "unknown"), e(5, "Self")];
-    expect(logbookRows(entries).map((r) => r.what)).toEqual(["→ Self", "→ VPP", "→ Self"]);
+    expect(logbookRows(entries).map((r) => r.what)).toEqual(["→ Self", "→ Anbieter steuert", "→ Self"]);
     expect(logbookRows(entries, undefined, true)).toHaveLength(6);
   });
   it("shows a script run once", () => {
@@ -167,5 +171,60 @@ describe("external inverter changes", () => {
     );
     expect(rows[0].kind).toBe("entity");
     expect(rows[0].by).toBe("Wechselrichter, nach EMS-Befehl");
+  });
+});
+
+describe("plain language", () => {
+  it("translates inverter states and cleans backend sentences", () => {
+    expect(plainState("Self-consumption mode (default)")).toBe("Eigenverbrauch");
+    expect(plainState("Etwas Eigenes")).toBe("Etwas Eigenes");
+    expect(plainText("Anders (unavailable / Stop (default)) → Eigenverbrauch")).toBe(
+      "Anders (nicht erreichbar / Stopp) → Eigenverbrauch",
+    );
+    expect(plainText("None → unavailable nicht bestätigt")).toBe("– → nicht erreichbar nicht bestätigt");
+    expect(plainText("Plan 01:00–07:00, Ø 38.8 ct")).toBe("Plan 01:00–07:00, Ø 38,8 ct");
+    expect(plainText("Freigegeben bis 10.11. 14:00")).toBe("Freigegeben bis 10.11. 14:00");
+    expect(plainText("-0,0 kWh geladen")).toBe("0,0 kWh geladen");
+  });
+
+  it("never shows a negative zero", () => {
+    expect(num(-0.04, 1)).toBe("0,0");
+    expect(eur(-0.004)).toBe("0,00 €");
+    expect(eur(-0.04)).toBe("-0,04 €");
+  });
+
+  it("formats ISO days in German", () => {
+    expect(day("2026-11-09")).toBe("09.11.2026");
+  });
+});
+
+describe("decisions", () => {
+  const e = (art: string, text: string) => ({ zeit: "2026-11-09T10:00:00+01:00", art, text });
+  it("collapses repeats, drops empty bookings and filters by actor", () => {
+    const entries = [
+      e("Freigabe", "Freigegeben bis 08.11."),
+      e("Freigabe", "Freigegeben bis 08.11."),
+      e("Abgerechnet", "Sperre seit 01:00: 0,0 kWh aus dem Netz, spart geschätzt 0,00 €"),
+      e("Geschaltet", "Eigenverbrauch → Laden aus dem Netz (Ø 36.2 ct)"),
+    ];
+    const all = decisions(entries, "Alle");
+    expect(all.map((d) => d.count)).toEqual([2, 1]);
+    expect(all[1].item.text).toContain("36,2 ct");
+    expect(decisions(entries, "Du")).toHaveLength(1);
+    expect(decisions(entries, "von außen")).toHaveLength(0);
+  });
+});
+
+describe("plan texts", () => {
+  it("says in plain words what a block does", () => {
+    const b = { von: 0, bis: 1, ct: 40, spart: 0.5 };
+    expect(blockSentence({ ...b, was: "h", kwh: 0 })).toBe("Der Akku hält seine Ladung und entlädt nicht");
+    expect(blockSentence({ ...b, was: "l", kwh: 1.2 })).toBe("Der Akku lädt 1,2 kWh aus dem Netz");
+  });
+  it("summarizes the chart for screen readers", () => {
+    const text = chartSummary([slot(0), slot(1, "h"), slot(2, "h"), slot(3, "l")]);
+    expect(text).toContain("0,5 Stunden Entladung gesperrt");
+    expect(text).toContain("0,3 Stunden Laden aus dem Netz");
+    expect(text).toContain("Preis zwischen 30 ct und 33 ct");
   });
 });

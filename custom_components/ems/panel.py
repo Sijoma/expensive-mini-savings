@@ -20,8 +20,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from . import history
+from .adapter import LOAD_FACTOR, P10_SHARE
 from .config_flow import merged_config
 from .const import DOMAIN, ENTITY_KEYS
+from .core.forecast import SPIKE_SHARE
+from .core.model import MIN_HOLD_SLOTS, Battery
+from .core.optimizer import SWITCH_CT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,6 +86,23 @@ def async_unregister_panel(hass: HomeAssistant) -> None:
     frontend.async_remove_panel(hass, PANEL_URL, warn_if_unknown=False)
 
 
+def planner_facts() -> dict[str, float]:
+    """The assumptions the planner calculates with, for the app's explanation (not the author's house)."""
+    b = Battery()
+    return {
+        "pv_akku": b.efficiency_charge,
+        "netz_akku": b.efficiency_grid_charge,
+        "akku_haus": b.efficiency_discharge,
+        "standby_w": round(b.standby_kw * 1000),
+        "netzladen_max_kw": b.grid_charge_kw,
+        "wechsel_ct": SWITCH_CT,
+        "sperren_min": MIN_HOLD_SLOTS * 15,
+        "last_faktor": LOAD_FACTOR,
+        "pv_p10_anteil": P10_SHARE,
+        "spitzen_anteil": SPIKE_SHARE,
+    }
+
+
 def app_config(hass: HomeAssistant) -> dict[str, Any]:
     """What the app needs to know: our sensors and the configured input and executor entities."""
     entries = hass.config_entries.async_entries(DOMAIN)
@@ -98,6 +119,7 @@ def app_config(hass: HomeAssistant) -> dict[str, Any]:
         "einstellungen": {k: v for k, v in conf.items() if k not in ENTITY_KEYS},
         "yaml": bool(entry and entry.source == SOURCE_IMPORT),
         "eintrag": entry.entry_id if entry else None,
+        "planer": planner_facts(),
     }
 
 

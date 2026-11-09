@@ -32,6 +32,7 @@ async def test_config_lists_sensors_and_entities(hass, hass_ws_client, set_state
     assert r["einstellungen"]["aufzeichnung"] is False
     assert r["yaml"] is True
     assert r["version"] != "0"
+    assert r["planer"]["sperren_min"] == 30 and 0.9 < r["planer"]["akku_haus"] <= 1
 
 
 async def test_history_of_a_day(hass, hass_ws_client, set_states, tmp_path):

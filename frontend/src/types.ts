@@ -24,6 +24,18 @@ export interface AppConfig {
   einstellungen: Record<string, unknown>;
   yaml: boolean;
   eintrag: string | null;
+  planer?: {
+    pv_akku: number;
+    netz_akku: number;
+    akku_haus: number;
+    standby_w: number;
+    netzladen_max_kw: number;
+    wechsel_ct: number;
+    sperren_min: number;
+    last_faktor: number;
+    pv_p10_anteil: number;
+    spitzen_anteil: number;
+  };
 }
 
 /** One row of the `slots` attribute, see adapter.plan_attributes. */

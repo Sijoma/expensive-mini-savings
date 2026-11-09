@@ -1,13 +1,32 @@
 import { css } from "lit";
 
-/** Battery action codes: plan (n/h/l) and measured (also f/e/v). */
-export const ACTIONS: Record<string, { name: string; short: string; icon: string; color: string }> = {
-  n: { name: "Eigenverbrauch", short: "Normal", icon: "mdi:battery-sync", color: "#a8a8a3" },
-  h: { name: "Entladung gesperrt", short: "Sperren", icon: "mdi:battery-lock", color: "#3987e5" },
-  l: { name: "Laden aus dem Netz", short: "Netzladen", icon: "mdi:transmission-tower-import", color: "#d95926" },
-  f: { name: "Stopp (Forced)", short: "Stopp", icon: "mdi:battery-lock", color: "#6aa6ef" },
-  e: { name: "Erzwungenes Entladen", short: "Entladen", icon: "mdi:battery-arrow-down", color: "#8e44ad" },
-  v: { name: "Anbieter steuert", short: "Anbieter", icon: "mdi:cloud-sync", color: "#c0392b" },
+/** Battery action codes: plan (n/h/l) and measured (also f/e/v). Names follow the fixed terms in
+ * PRODUCT.md; `sentence` says what the battery does, for headlines. */
+export const ACTIONS: Record<
+  string,
+  { name: string; sentence: string; icon: string; color: string }
+> = {
+  n: { name: "Eigenverbrauch", sentence: "Der Akku läuft normal", icon: "mdi:battery-sync", color: "#9a9a94" },
+  h: {
+    name: "Entladung gesperrt",
+    sentence: "Der Akku hält seine Ladung",
+    icon: "mdi:battery-lock",
+    color: "#3987e5",
+  },
+  l: {
+    name: "Laden aus dem Netz",
+    sentence: "Der Akku lädt aus dem Netz",
+    icon: "mdi:transmission-tower-import",
+    color: "#d95926",
+  },
+  f: { name: "Angehalten", sentence: "Der Akku ist angehalten", icon: "mdi:battery-lock", color: "#6aa6ef" },
+  e: {
+    name: "Erzwungenes Entladen",
+    sentence: "Der Akku wird entladen",
+    icon: "mdi:battery-arrow-down",
+    color: "#8e44ad",
+  },
+  v: { name: "Anbieter steuert", sentence: "Ein Anbieter steuert den Akku", icon: "mdi:cloud-sync", color: "#b33b2e" },
 };
 
 export const NAME_TO_CODE: Record<string, string> = Object.fromEntries(
@@ -20,15 +39,16 @@ export const COLORS = {
   socWithout: "#9a9a95",
   pv: "#e0a100",
   load: "#8a8a85",
-  boost: "#e8590c",
-  measured: "#3987e5",
+  boost: "#c2255c",
+  measured: "#2e9d4a",
   forecast: "#a8a8a3",
 };
 
-/** Shared card look, following the Home Assistant theme variables. */
+/** Shared look, following the Home Assistant theme variables. */
 export const cardStyles = css`
   :host {
     display: block;
+    --ems-accent: color-mix(in srgb, var(--primary-color, #03a9f4) 70%, black);
   }
   .card {
     background: var(--ha-card-background, var(--card-background-color, #fff));
@@ -41,11 +61,12 @@ export const cardStyles = css`
   }
   h2 {
     margin: 0 0 12px;
-    font-size: 1.05rem;
+    font-size: 1.15rem;
     font-weight: 600;
     display: flex;
     align-items: center;
     gap: 8px;
+    letter-spacing: -0.005em;
   }
   h2 ha-icon {
     --mdc-icon-size: 20px;
@@ -55,31 +76,62 @@ export const cardStyles = css`
     color: var(--secondary-text-color);
   }
   .small {
-    font-size: 0.85rem;
+    font-size: 0.875rem;
+  }
+  .num-tab {
+    font-variant-numeric: tabular-nums;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
   .grid {
     display: grid;
     gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   }
   .wide {
     grid-column: 1 / -1;
   }
+  /* Notice: tinted surface with an icon, no side stripe */
   .warn {
-    border-left: 4px solid var(--warning-color, #ffa600);
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--warning-color, #ffa600) 12%, transparent);
-    border-radius: 6px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--warning-color, #ffa600) 14%, transparent);
+    border-radius: 8px;
     margin: 8px 0;
+    font-size: 0.9rem;
+    line-height: 1.45;
   }
-  .error {
-    border-left-color: var(--error-color, #db4437);
-    background: color-mix(in srgb, var(--error-color, #db4437) 12%, transparent);
+  .warn::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-top: 0.45em;
+    border-radius: 50%;
+    background: var(--warning-color, #ffa600);
+  }
+  .warn.error {
+    background: color-mix(in srgb, var(--error-color, #db4437) 14%, transparent);
+  }
+  .warn.error::before {
+    background: var(--error-color, #db4437);
   }
   table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
   }
   th,
   td {
@@ -100,27 +152,42 @@ export const cardStyles = css`
   .scroll {
     overflow-x: auto;
   }
+  /* Action label: tinted surface, colored dot, text in the normal text color (contrast in both themes) */
   .pill {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    gap: 6px;
+    padding: 2px 10px 2px 8px;
     border-radius: 999px;
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     white-space: nowrap;
-    color: #fff;
+    color: var(--primary-text-color);
+    background: color-mix(in srgb, var(--pill, #9a9a94) 18%, transparent);
+  }
+  .pill::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pill, #9a9a94);
   }
   button.action {
     font: inherit;
+    font-weight: 500;
     border: none;
     border-radius: 999px;
-    padding: 8px 16px;
+    min-height: 44px;
+    padding: 0 20px;
     cursor: pointer;
-    background: var(--primary-color);
-    color: var(--text-primary-color, #fff);
+    background: var(--ems-accent);
+    color: #fff;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    gap: 8px;
+  }
+  button.action ha-icon {
+    --mdc-icon-size: 20px;
   }
   button.action.secondary {
     background: transparent;
@@ -130,6 +197,18 @@ export const cardStyles = css`
   button.action:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  button:focus-visible,
+  [role="tab"]:focus-visible,
+  [role="radio"]:focus-visible,
+  summary:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: 2px;
+  }
+  a {
+    color: var(--primary-color);
+    text-underline-offset: 2px;
   }
   .kpis {
     display: grid;
@@ -142,20 +221,28 @@ export const cardStyles = css`
     gap: 2px;
   }
   .kpi .value {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .kpi .label {
     color: var(--secondary-text-color);
-    font-size: 0.85rem;
+    font-size: 0.875rem;
   }
   details summary {
     cursor: pointer;
     color: var(--secondary-text-color);
+    min-height: 32px;
+    display: list-item;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary-color, #03a9f4) 30%, transparent);
   }
 `;
 
 export function cssVar(el: Element, name: string, fallback: string): string {
   return getComputedStyle(el).getPropertyValue(name).trim() || fallback;
 }
+
+/** Pill markup helper value: style attribute for an action color. */
+export const pillColor = (code: string): string => `--pill:${(ACTIONS[code] ?? ACTIONS.n).color}`;

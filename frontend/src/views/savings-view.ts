@@ -1,10 +1,10 @@
 import { LitElement, html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import { define, type ChartOption } from "../chart";
-import { eur, num, time, toMs } from "../format";
+import { day, eur, num, time, toMs } from "../format";
 import { configured, dailyChanges, statisticChange } from "../ha";
 import { savingsOption } from "../options";
-import { ACTIONS, cardStyles } from "../theme";
+import { ACTIONS, COLORS, cardStyles, pillColor } from "../theme";
 import type { AppConfig, HomeAssistant } from "../types";
 
 const REFRESH_MS = 10 * 60_000;
@@ -74,22 +74,52 @@ export class EmsSavingsView extends LitElement {
       </div>`;
     }
     const p = this.periods;
-    const booked: Booked[] = savings?.attributes.aktionen ?? [];
+    const booked: Booked[] = ((savings?.attributes.aktionen ?? []) as Booked[]).filter(
+      (b) => Math.abs(b.kwh) >= 0.05 || Math.abs(b.betrag) >= 0.005,
+    );
     const total = booked.reduce((s, b) => s + (b.betrag || 0), 0);
     const since = savings?.attributes.seit;
-    return html`<div class="grid">
+    return html`<style>
+        .legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px 14px;
+          margin: 4px 0 0;
+          padding: 0;
+          list-style: none;
+        }
+        .legend li {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .legend i {
+          width: 10px;
+          height: 10px;
+          border-radius: 3px;
+        }
+      </style>
+      <div class="grid">
       <div class="card wide">
         <h2><ha-icon icon="mdi:piggy-bank"></ha-icon>Gespart (gemessen)</h2>
         <div class="kpis">
           ${this.kpi(p.day, "Heute")} ${this.kpi(p.week, "Diese Woche")} ${this.kpi(p.month, "Diesen Monat")}
-          ${this.kpi(savings ? Number(savings.state) : null, since ? `Seit ${since}` : "Seit Start")}
+          ${this.kpi(savings ? Number(savings.state) : null, since ? `Seit ${day(since)}` : "Seit Start")}
           ${this.config.entitaeten.ersparnis_prognose ? this.kpi(p.forecastMonth, "Prognose diesen Monat") : nothing}
         </div>
       </div>
       <div class="card wide">
         <h2><ha-icon icon="mdi:chart-bar"></ha-icon>Pro Tag</h2>
         ${this.chart
-          ? html`<ems-chart .option=${this.chart} .height=${240}></ems-chart>`
+          ? html`<ems-chart
+                .option=${this.chart}
+                .height=${240}
+                .label=${"Ersparnis pro Tag in Euro: gemessen und Prognose des Plans."}
+              ></ems-chart>
+              <ul class="legend small muted" aria-label="Legende">
+                <li><i style="background:${COLORS.measured}"></i>Gemessen</li>
+                <li><i style="background:${COLORS.forecast}"></i>Prognose des Plans</li>
+              </ul>`
           : html`<div class="muted">${this.loaded ? "Keine Daten." : "Lädt …"}</div>`}
       </div>
       <div class="card">
@@ -115,7 +145,7 @@ export class EmsSavingsView extends LitElement {
                         ${start ? new Date(start).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) : ""}
                         ${start ? time(start) : ""}–${end ? time(end) : ""}
                       </td>
-                      <td><span class="pill" style="background:${a.color}">${a.short}</span></td>
+                      <td><span class="pill" style=${pillColor(b.was)}>${a.name}</span></td>
                       <td class="num">${num(b.kwh, 1)} kWh</td>
                       <td class="num">${eur(b.betrag)}</td>
                     </tr>`;

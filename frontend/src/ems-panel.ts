@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
+import { focusItem, nextIndex } from "./a11y";
 import { define } from "./chart";
 import { cardStyles } from "./theme";
 import type { AppConfig, HomeAssistant } from "./types";
@@ -92,7 +93,8 @@ export class EmsPanel extends LitElement {
         box-sizing: border-box;
       }
       nav button[aria-selected="true"] {
-        color: var(--primary-color);
+        color: var(--primary-text-color);
+        font-weight: 600;
         border-bottom-color: var(--primary-color);
       }
       main {
@@ -105,11 +107,12 @@ export class EmsPanel extends LitElement {
         main {
           padding: 12px 8px;
         }
-        nav button span {
-          display: none;
+        nav button {
+          padding: 10px 10px;
+          font-size: 0.9rem;
         }
-        nav button[aria-selected="true"] span {
-          display: inline;
+        nav button ha-icon {
+          display: none;
         }
       }
     `,
@@ -140,6 +143,15 @@ export class EmsPanel extends LitElement {
     return e?.state === "on" ? (e.attributes.aktionen?.length ?? 1) : 0;
   }
 
+  private onTabKey = (ev: KeyboardEvent): void => {
+    const current = TABS.findIndex((t) => t.id === this.tab);
+    const index = nextIndex(ev.key, current, TABS.length);
+    if (index == null) return;
+    ev.preventDefault();
+    this.select(TABS[index].id);
+    this.updateComplete.then(() => focusItem(this.renderRoot, '[role="tab"]', index));
+  };
+
   private select(tab: Tab): void {
     this.tab = tab;
     history.replaceState(null, "", `#${tab}`);
@@ -151,23 +163,38 @@ export class EmsPanel extends LitElement {
           <ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>
           <span class="title">Energie-Management</span>
         </div>
-        <nav role="tablist">
+        <nav role="tablist" aria-label="Bereiche">
           ${TABS.map(
             (t) =>
-              html`<button role="tab" aria-selected=${this.tab === t.id} @click=${() => this.select(t.id)}>
-                <ha-icon icon=${t.icon}></ha-icon><span>${t.name}</span>
+              html`<button
+                role="tab"
+                id="tab-${t.id}"
+                aria-selected=${this.tab === t.id}
+                aria-controls="panel"
+                tabindex=${this.tab === t.id ? 0 : -1}
+                @click=${() => this.select(t.id)}
+                @keydown=${this.onTabKey}
+              >
+                <ha-icon icon=${t.icon} aria-hidden="true"></ha-icon><span>${t.name}</span>
                 ${t.id === "plan" && this.pending()
-                  ? html`<span class="badge" title="wartet auf Freigabe">${this.pending()}</span>`
+                  ? html`<span class="badge" aria-label="${this.pending()} warten auf Freigabe"
+                      >${this.pending()}</span
+                    >`
                   : nothing}
               </button>`,
           )}
         </nav>
       </header>
-      <main>${this.renderTab()}</main>`;
+      <main id="panel" role="tabpanel" aria-labelledby="tab-${this.tab}">${this.renderTab()}</main>`;
   }
 
   private renderTab() {
-    if (this.error) return html`<div class="card warn error">EMS nicht erreichbar: ${this.error}</div>`;
+    if (this.error) {
+      return html`<div class="warn error">
+        Die EMS-Integration antwortet nicht (${this.error}). Prüfe unter Einstellungen → Geräte & Dienste, ob
+        „Expensive Mini Savings“ geladen ist, und lade die Seite neu.
+      </div>`;
+    }
     if (!this.config || !this.hass) return html`<div class="muted">Lädt …</div>`;
     const c = this.config;
     switch (this.tab) {
