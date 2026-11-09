@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { QUARTER_MS, historyOption, intervals, midnights, planOption, savingsOption } from "../src/options";
+import {
+  QUARTER_MS,
+  historyOption,
+  intervals,
+  midnights,
+  planOption,
+  priceColor,
+  priceLevel,
+  savingsOption,
+  tick,
+} from "../src/options";
 import { summary } from "../src/views/history-view";
 import { cause, logbookRows } from "../src/logbook";
 import { plainState, plainText } from "../src/texts";
 import { day, eur, num } from "../src/format";
 import { decisions } from "../src/views/log-view";
-import { blockSentence, chartSummary } from "../src/views/plan-view";
+import { blockSentence, chartSummary, lowPoint } from "../src/views/plan-view";
 import type { HistoryRow, SlotRow } from "../src/types";
 
 const T0 = Date.parse("2026-11-09T22:00:00+01:00");
@@ -32,20 +42,45 @@ describe("midnights", () => {
   });
 });
 
+describe("tick", () => {
+  it("shows the day at midnight and the time otherwise", () => {
+    expect(tick(Date.parse("2026-11-10T00:00:00+01:00"))).toBe("Di. 10.11.");
+    expect(tick(Date.parse("2026-11-10T04:00:00+01:00"))).toBe("04:00");
+  });
+});
+
 describe("planOption", () => {
   it("is empty without slots", () => {
     expect(planOption([], T0)).toEqual({});
   });
 
-  it("colors price bars by action and marks the heat pump boost", () => {
-    const slots = [slot(0), slot(1, "h"), slot(2, "l", "pv"), slot(3, "n", "pv")];
+  it("colors price bars by level and shows planned actions as labeled bands", () => {
+    const slots = [slot(0), slot(1, "h"), slot(2, "h"), slot(3, "l", "pv"), slot(4, "n", "pv")];
     const o = planOption(slots, T0) as any;
     const price = o.series.find((s: any) => s.name === "Preis");
     const colors = price.data.map((d: any) => d.itemStyle.color);
-    expect(new Set(colors).size).toBe(3);
+    expect(colors[0]).toBe("rgb(46,157,74)"); // cheapest: green
+    expect(colors[4]).toBe("rgb(217,68,47)"); // most expensive: red
+    const bands = price.markArea.data.map((d: any) => d[0].label.formatter);
+    expect(bands).toEqual(["Entladung gesperrt", "Laden aus dem Netz"]);
     const pv = o.series.find((s: any) => s.name === "PV");
     expect(pv.markArea.data).toHaveLength(1);
     expect(o.xAxis).toHaveLength(3);
+  });
+
+  it("names the price level in thirds of the range", () => {
+    expect(priceLevel(41, 41, 82)).toBe("günstig");
+    expect(priceLevel(60, 41, 82)).toBe("mittel");
+    expect(priceLevel(80, 41, 82)).toBe("teuer");
+    expect(priceLevel(30, 30, 30)).toBe("mittel");
+    expect(priceColor(61.5, 41, 82)).toBe("rgb(242,183,5)");
+  });
+
+  it("finds the lowest planned state of charge", () => {
+    const slots = [slot(0), slot(1), slot(2)];
+    slots[1][4] = 16;
+    expect(lowPoint(slots)).toEqual({ soc: 16, at: T0 + 2 * QUARTER_MS });
+    expect(lowPoint([])).toBeNull();
   });
 
   it("puts the SoC at the end of each quarter hour", () => {
@@ -58,7 +93,7 @@ describe("planOption", () => {
     const o = planOption([slot(0, "h")], T0) as any;
     const text = o.tooltip.formatter([{ axisValue: T0 + 60_000 }]);
     expect(text).toContain("Entladung gesperrt");
-    expect(text).toContain("30 ct");
+    expect(text).toContain("Strom 30 ct");
   });
 });
 

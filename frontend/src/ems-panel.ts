@@ -65,11 +65,11 @@ export class EmsPanel extends LitElement {
       }
       nav button {
         font: inherit;
-        font-size: 0.95rem;
+        font-size: 1rem;
         background: none;
         border: none;
         color: var(--secondary-text-color);
-        padding: 10px 14px;
+        padding: 12px 16px;
         border-bottom: 2px solid transparent;
         cursor: pointer;
         display: inline-flex;

@@ -4,7 +4,7 @@ import { focusItem, nextIndex } from "../a11y";
 import { define, type ChartOption } from "../chart";
 import { ct, eur, num, time, toMs, when } from "../format";
 import { available, configured, sensor } from "../ha";
-import { QUARTER_MS, planOption } from "../options";
+import { QUARTER_MS, planOption, priceLevel } from "../options";
 import { plainState, plainText } from "../texts";
 import { ACTIONS, COLORS, NAME_TO_CODE, cardStyles, cssVar, pillColor } from "../theme";
 import type { AppConfig, HassEntity, HomeAssistant, PlanBlock, SlotRow } from "../types";
@@ -28,6 +28,13 @@ export function blockSentence(b: PlanBlock): string {
   return b.was === "l"
     ? `Der Akku lädt ${num(b.kwh, 1)} kWh aus dem Netz`
     : "Der Akku hält seine Ladung und entlädt nicht";
+}
+
+/** Lowest planned state of charge and when it is reached. */
+export function lowPoint(slots: SlotRow[]): { soc: number; at: number } | null {
+  if (!slots.length) return null;
+  const s = slots.reduce((lowest, x) => (x[4] < lowest[4] ? x : lowest));
+  return { soc: s[4], at: s[0] + QUARTER_MS };
 }
 
 /** One sentence that summarizes the plan chart for screen readers. */
@@ -54,15 +61,24 @@ export class EmsPlanView extends LitElement {
   @state() private feedback?: Feedback;
 
   private chartFor?: unknown;
+  private chartCompact?: boolean;
   private chartOption?: ChartOption;
 
   static styles = [cardStyles];
 
   private option(slots: SlotRow[]): ChartOption {
     // recompute only when the plan changed (hass changes on every state change in the house)
-    if (this.chartFor !== slots) {
+    const compact = this.narrow || this.offsetWidth < 600;
+    if (this.chartFor !== slots || this.chartCompact !== compact) {
       this.chartFor = slots;
-      this.chartOption = planOption(slots, Date.now(), cssVar(this, "--primary-color", "#03a9f4"));
+      this.chartCompact = compact;
+      this.chartOption = planOption(
+        slots,
+        Date.now(),
+        cssVar(this, "--primary-color", "#03a9f4"),
+        cssVar(this, "--primary-text-color", "#212121"),
+        compact,
+      );
     }
     return this.chartOption!;
   }
@@ -251,65 +267,154 @@ export class EmsPlanView extends LitElement {
       </section>`;
     }
     const a = plan.attributes;
+    const slots: SlotRow[] = a.slots ?? [];
     const code = NAME_TO_CODE[plan.state] ?? "n";
     const action = ACTIONS[code];
     const computed = toMs(a.berechnet);
     const blocks: PlanBlock[] = a.aktionen ?? [];
     const next = blocks.find((b) => b.bis > Date.now() && !(b.von <= Date.now() && code === b.was));
     const charge = Number(a.netzladen_kwh) || 0;
+    const level = available(soc) ? Math.round(Number(soc.state)) : null;
+    const low = lowPoint(slots);
+    const prices = slots.map((s) => s[1]);
+    const price = prices[0];
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
     return html`<section class="card now" aria-labelledby="now-title">
       <style>
+        .now {
+          padding: 20px;
+        }
         .now .head {
           display: flex;
-          gap: 14px;
+          gap: 16px;
           align-items: center;
-          margin-bottom: 10px;
+          margin-bottom: 12px;
         }
         .now .badge {
-          width: 48px;
-          height: 48px;
-          border-radius: 14px;
+          width: 60px;
+          height: 60px;
+          border-radius: 18px;
           display: grid;
           place-items: center;
           flex: none;
           color: #fff;
         }
         .now .badge ha-icon {
-          --mdc-icon-size: 28px;
+          --mdc-icon-size: 34px;
         }
         .now h2 {
-          font-size: 1.45rem;
+          font-size: 1.9rem;
           margin: 0;
-          line-height: 1.25;
+          line-height: 1.2;
+          letter-spacing: -0.015em;
+          text-wrap: balance;
         }
         .now .reason {
-          margin: 0 0 16px;
+          margin: 0 0 20px;
+          font-size: 1.05rem;
           line-height: 1.5;
           max-width: 72ch;
+          text-wrap: pretty;
+        }
+        .gauges {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+          gap: 20px 28px;
+          margin-bottom: 20px;
+        }
+        .gauge .label {
+          color: var(--secondary-text-color);
+          font-size: 0.95rem;
+        }
+        .gauge .big {
+          font-size: 2.6rem;
+          font-weight: 600;
+          line-height: 1.1;
+          letter-spacing: -0.02em;
+          font-variant-numeric: tabular-nums;
+        }
+        .gauge .big small {
+          font-size: 1.1rem;
+          font-weight: 500;
+          letter-spacing: 0;
+          margin-left: 4px;
+        }
+        .gauge .note {
+          color: var(--secondary-text-color);
+          font-size: 0.95rem;
+          margin-top: 6px;
+        }
+        .bar {
+          position: relative;
+          height: 12px;
+          border-radius: 6px;
+          margin-top: 10px;
+          background: color-mix(in srgb, var(--primary-text-color) 10%, transparent);
+        }
+        .bar .fill {
+          position: absolute;
+          inset: 0 auto 0 0;
+          border-radius: 6px;
+          background: ${COLORS.soc};
+        }
+        .bar .mark {
+          position: absolute;
+          top: -4px;
+          bottom: -4px;
+          width: 3px;
+          margin-left: -1.5px;
+          border-radius: 2px;
+          background: var(--primary-text-color);
+        }
+        .scale {
+          position: relative;
+          height: 12px;
+          border-radius: 6px;
+          margin-top: 10px;
+          background: linear-gradient(90deg, ${COLORS.cheap}, ${COLORS.middle}, ${COLORS.expensive});
+        }
+        .scale .mark {
+          position: absolute;
+          top: -4px;
+          bottom: -4px;
+          width: 4px;
+          margin-left: -2px;
+          border-radius: 2px;
+          background: var(--primary-text-color);
+          outline: 2px solid var(--ha-card-background, var(--card-background-color, #fff));
         }
         .now dl {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-          gap: 12px 16px;
-          margin: 0 0 14px;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 12px 28px;
+          margin: 0 0 16px;
         }
         .now dt {
           color: var(--secondary-text-color);
-          font-size: 0.875rem;
+          font-size: 0.95rem;
         }
         .now dd {
           margin: 2px 0 0;
-          font-size: 1.15rem;
+          font-size: 1.35rem;
           font-weight: 600;
           font-variant-numeric: tabular-nums;
         }
         .now .next {
           display: flex;
-          gap: 8px;
-          align-items: baseline;
+          gap: 8px 10px;
+          align-items: center;
           flex-wrap: wrap;
-          padding: 10px 0 0;
+          padding: 14px 0 0;
           border-top: 1px solid var(--divider-color);
+        }
+        @media (max-width: 600px) {
+          .now h2 {
+            font-size: 1.55rem;
+          }
+          .gauge .big {
+            font-size: 2.2rem;
+          }
         }
       </style>
       <div class="head">
@@ -318,36 +423,63 @@ export class EmsPlanView extends LitElement {
         </div>
         <div>
           <h2 id="now-title">${action.sentence}</h2>
-          <div class="muted small">${action.name} · berechnet ${computed ? time(computed) : "–"}</div>
+          <div class="muted">${action.name} · berechnet ${computed ? time(computed) : "–"}</div>
         </div>
       </div>
       ${a.grund && plainText(a.grund).replace(/^Der /, "") !== action.sentence.replace(/^Der /, "")
         ? html`<p class="reason">${plainText(a.grund)}</p>`
-        : html`<p class="reason muted">Im Moment lohnt sich kein Eingriff. Der Akku deckt den Verbrauch, solange er Ladung hat.</p>`}
+        : html`<p class="reason muted">
+            Im Moment lohnt sich kein Eingriff. Der Akku deckt den Verbrauch, solange er Ladung hat.
+          </p>`}
+      <div class="gauges">
+        <div class="gauge">
+          <div class="label">Akku</div>
+          <div class="big">${level ?? "–"}<small>%</small></div>
+          <div class="bar" role="img" aria-label="Akkustand ${level ?? "unbekannt"} Prozent">
+            <div class="fill" style="width:${level ?? 0}%"></div>
+            ${low ? html`<div class="mark" style="left:${low.soc}%"></div>` : nothing}
+          </div>
+          <div class="note">
+            ${low ? html`Tiefster Stand laut Plan: <b>${low.soc} %</b> ${when(low.at)}` : nothing}
+          </div>
+        </div>
+        <div class="gauge">
+          <div class="label">Strom jetzt</div>
+          <div class="big">${price != null ? Math.round(price) : "–"}<small>ct/kWh</small></div>
+          ${price != null
+            ? html`<div
+                  class="scale"
+                  role="img"
+                  aria-label="Der Preis ist ${priceLevel(price, min, max)}, zwischen ${ct(min)} und ${ct(max)} im Plan"
+                >
+                  <div class="mark" style="left:${max > min ? ((price - min) / (max - min)) * 100 : 50}%"></div>
+                </div>
+                <div class="note">
+                  Gerade <b>${priceLevel(price, min, max)}</b> · im Plan zwischen ${ct(min)} und ${ct(max)}
+                </div>`
+            : nothing}
+        </div>
+      </div>
       <dl>
         <div>
-          <dt>Akku</dt>
-          <dd>${available(soc) ? `${Math.round(Number(soc.state))} %` : "–"}</dd>
-        </div>
-        <div>
-          <dt>Strom jetzt</dt>
-          <dd>${ct(a.slots?.[0]?.[1])}</dd>
-        </div>
-        <div>
-          <dt>1 kWh im Akku ist wert</dt>
-          <dd style="color:${COLORS.value}">${available(value) ? ct(value.state) : "–"}</dd>
+          <dt>1 kWh im Akku ist später wert</dt>
+          <dd>${available(value) ? ct(value.state) : "–"}</dd>
         </div>
         <div>
           <dt>Plan spart bis ${a.bis ? when(toMs(a.bis)!) : "–"}</dt>
           <dd>${eur(a.ersparnis_eur)}</dd>
         </div>
       </dl>
-      <div class="next small">
+      <div class="next">
         ${next
           ? html`<b>Als Nächstes:</b>
-              <span>${when(next.von)}–${time(next.bis)}</span>
+              <span class="num-tab">${when(next.von)}–${time(next.bis)}</span>
               <span class="pill" style=${pillColor(next.was)}>${ACTIONS[next.was].name}</span>
-              <span class="muted">spart ${eur(next.spart)}${charge > 0 && next.was === "l" ? ` · ${num(charge, 1)} kWh aus dem Netz` : ""}</span>`
+              <span class="muted"
+                >spart ${eur(next.spart)}${charge > 0 && next.was === "l"
+                  ? ` · ${num(charge, 1)} kWh aus dem Netz`
+                  : ""}</span
+              >`
           : html`<span class="muted">Keine weiteren Eingriffe geplant. Der Akku läuft normal.</span>`}
       </div>
     </section>`;
@@ -567,25 +699,28 @@ export class EmsPlanView extends LitElement {
 
   private renderChart(slots: SlotRow[]) {
     const legend: [string, string, string?][] = [
-      ["Eigenverbrauch", ACTIONS.n.color],
-      ["Entladung gesperrt", ACTIONS.h.color],
-      ["Laden aus dem Netz", ACTIONS.l.color],
-      ["1 kWh im Akku wert", COLORS.value, "line"],
+      ["Strompreis: günstig", COLORS.cheap],
+      ["mittel", COLORS.middle],
+      ["teuer", COLORS.expensive],
+      ["Entladung gesperrt", ACTIONS.h.color, "band"],
+      ["Laden aus dem Netz", ACTIONS.l.color, "band"],
+      ["1 kWh im Akku wert", cssVar(this, "--primary-text-color", "#212121"), "dash"],
       ["Akku mit Plan", COLORS.soc, "line"],
       ["Akku ohne Plan", COLORS.socWithout, "dash"],
       ["PV", COLORS.pv],
       ["Verbrauch", COLORS.load, "line"],
-      ["PV-Boost", COLORS.boost],
+      ["PV-Boost", COLORS.boost, "band"],
       ["Jetzt", cssVar(this, "--primary-color", "#03a9f4"), "dash"],
     ];
     return html`<style>
         .legend {
           display: flex;
           flex-wrap: wrap;
-          gap: 4px 14px;
-          margin: 4px 0 0;
+          gap: 6px 18px;
+          margin: 8px 0 0;
           padding: 0;
           list-style: none;
+          font-size: 0.95rem;
         }
         .legend li {
           display: inline-flex;
@@ -599,10 +734,16 @@ export class EmsPlanView extends LitElement {
           display: inline-block;
         }
         .legend i.line {
+          width: 14px;
           height: 3px;
           border-radius: 2px;
         }
+        .legend i.band {
+          width: 14px;
+          opacity: 0.35;
+        }
         .legend i.dash {
+          width: 14px;
           height: 0;
           border-top: 2px dashed;
           background: none !important;
@@ -615,20 +756,20 @@ export class EmsPlanView extends LitElement {
       </style>
       <h2><ha-icon icon="mdi:chart-timeline-variant"></ha-icon>Plan</h2>
       ${slots.length
-        ? html`<p class="explain" style="margin:0 0 8px">
-              <b>So liest du das:</b> Liegt die grüne Linie (was 1 kWh im Akku später spart) über dem Preis, lohnt es sich,
-              den Akku für später aufzuheben.
+        ? html`<p class="explain" style="margin:0 0 12px">
+              <b>So liest du das:</b> Die Balken zeigen den Strompreis, von grün (günstig) bis rot (teuer). Liegt die
+              gestrichelte Linie (was 1 kWh im Akku später spart) über dem Preis, lohnt es sich, den Akku aufzuheben.
+              Farbige Bänder zeigen, wann der Plan eingreift.
             </p>
-            <ems-chart .option=${this.option(slots)} .height=${470} .label=${chartSummary(slots)}></ems-chart>
-            <ul class="legend small muted" aria-label="Legende">
+            <ems-chart .option=${this.option(slots)} .height=${624} .label=${chartSummary(slots)}></ems-chart>
+            <ul class="legend muted" aria-label="Legende">
               ${legend.map(
                 ([n, c, kind]) =>
                   html`<li><i class=${kind ?? ""} style="background:${c};border-color:${c}"></i>${n}</li>`,
               )}
             </ul>
             <p class="explain small muted">
-              Oben: Preis je Viertelstunde, gefärbt nach der geplanten Aktion. Mitte: Akkustand mit und ohne Plan.
-              Unten: PV-Prognose und erwarteter Verbrauch. Zum Zoomen ziehen oder scrollen, antippen für Details.
+              Zum Zoomen ziehen oder scrollen, antippen für die Werte einer Viertelstunde.
             </p>`
         : html`<div class="muted">Kein Plan.</div>`}`;
   }

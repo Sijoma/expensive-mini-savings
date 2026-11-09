@@ -93,14 +93,15 @@ export class EmsChart extends LitElement {
     const axes = (a: unknown) =>
       (Array.isArray(a) ? a : a ? [a] : []).map((x: Record<string, any>) => ({
         ...x,
-        axisLabel: { color: muted, ...x.axisLabel },
-        nameTextStyle: { color: muted, ...x.nameTextStyle },
+        axisLabel: { color: muted, fontSize: 13, ...x.axisLabel },
+        nameTextStyle: { color: muted, fontSize: 13, ...x.nameTextStyle },
       }));
     const option = this.option as Record<string, unknown>;
     this.chart.setOption(
       {
         backgroundColor: "transparent",
-        textStyle: { color: text, fontFamily: "inherit" },
+        // a canvas cannot resolve "inherit": pass the computed family, or text falls back to 10px
+        textStyle: { color: text, fontFamily: getComputedStyle(this).fontFamily || "sans-serif", fontSize: 13 },
         animation: false,
         ...option,
         tooltip: {

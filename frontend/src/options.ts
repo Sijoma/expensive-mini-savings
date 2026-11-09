@@ -32,29 +32,72 @@ const dayLines = (from: number, to: number) =>
   midnights(from, to).map((t) => ({
     xAxis: t,
     lineStyle: { color: "rgba(128,128,128,0.45)", type: "solid", width: 1 },
-    label: {
-      formatter: new Date(t).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }),
-      position: "insideEndTop",
-      color: "#8a8a85",
-      textBorderWidth: 0,
-      fontSize: 10,
-    },
+    label: { show: false },
   }));
 
-/** The main chart: price by action and value of 1 kWh / SoC with and without plan / PV, load, boost. */
-export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): ChartOption {
+/** Axis tick text: the time, and the day at midnight ("Di. 10.11."). */
+export function tick(ms: number): string {
+  const d = new Date(ms);
+  if (d.getHours() === 0 && d.getMinutes() === 0) {
+    return d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }).replace(",", "");
+  }
+  return time(ms);
+}
+
+const PRICE_STOPS: [number, [number, number, number]][] = [
+  [0, [46, 157, 74]], // cheap: green
+  [0.5, [242, 183, 5]], // middle: amber
+  [1, [217, 68, 47]], // expensive: red
+];
+
+/** Color of a price between the cheapest and the most expensive one in view (green → amber → red). */
+export function priceColor(price: number, min: number, max: number): string {
+  const t = max > min ? Math.min(1, Math.max(0, (price - min) / (max - min))) : 0.5;
+  const upper = PRICE_STOPS.findIndex(([stop]) => t <= stop);
+  const [t1, c1] = PRICE_STOPS[Math.max(upper, 1)];
+  const [t0, c0] = PRICE_STOPS[Math.max(upper, 1) - 1];
+  const f = (t - t0) / (t1 - t0);
+  const mix = c0.map((c, i) => Math.round(c + (c1[i] - c) * f));
+  return `rgb(${mix.join(",")})`;
+}
+
+/** "günstig", "mittel" or "teuer": thirds of the range between cheapest and most expensive price. */
+export function priceLevel(price: number, min: number, max: number): "günstig" | "mittel" | "teuer" {
+  const t = max > min ? (price - min) / (max - min) : 0.5;
+  return t < 1 / 3 ? "günstig" : t < 2 / 3 ? "mittel" : "teuer";
+}
+
+/** The main chart: price by level with the planned actions as bands / SoC with and without plan /
+ * PV, load and heat pump boost. */
+export function planOption(
+  slots: SlotRow[],
+  now: number,
+  accent = "#03a9f4",
+  ink = "#212121",
+  compact = false,
+): ChartOption {
   if (!slots.length) return {};
   const first = slots[0][0];
   const last = slots[slots.length - 1][0] + QUARTER_MS;
   const starts = slots.map((s) => s[0]);
+  const bands = (code: string) =>
+    intervals(
+      starts,
+      slots.map((s) => s[5] === code),
+    );
   const boost = intervals(
     starts,
     slots.map((s) => s[6] === "pv"),
   );
+  const prices = slots.map((s) => s[1]);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const left = 48;
+  const right = 16;
   const grids = [
-    { top: 28, height: 150, left: 44, right: 44 },
-    { top: 222, height: 100, left: 44, right: 44 },
-    { top: 366, height: 100, left: 44, right: 44 },
+    { top: 40, height: 220, left, right },
+    { top: 312, height: 110, left, right },
+    { top: 474, height: 110, left, right },
   ];
   const x = (i: number, show: boolean) => ({
     type: "time",
@@ -62,50 +105,80 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
     min: first,
     max: last,
     ...axisStyle(),
-    axisLabel: { show, hideOverlap: true, formatter: (v: number) => time(v) },
+    axisLabel: { show, hideOverlap: true, fontSize: 13, formatter: (v: number) => tick(v) },
     splitLine: { show: false },
     axisPointer: { show: true, label: { show: false } },
+  });
+  const y = (i: number, name: string, extra: Record<string, unknown>) => ({
+    type: "value",
+    gridIndex: i,
+    name,
+    nameLocation: "end",
+    nameGap: 12,
+    nameTextStyle: { align: "left", padding: [0, 0, 0, -left + 4], fontSize: 14, fontWeight: 600 },
+    ...axisStyle(),
+    axisLabel: { fontSize: 13 },
+    ...extra,
   });
   const nowLine = {
     silent: true,
     symbol: "none",
     data: [
-      {
-        xAxis: now,
-        lineStyle: { color: accent, type: "dashed", width: 1.5 },
-        label: { show: false },
-      },
+      { xAxis: now, lineStyle: { color: accent, type: "dashed", width: 2 }, label: { show: false } },
       ...dayLines(first, last),
     ],
   };
+  const actionBands = ["h", "l"].flatMap((code) =>
+    bands(code).map(([a, b]) => [
+      {
+        xAxis: a,
+        itemStyle: { color: ACTIONS[code].color, opacity: 0.26 },
+        label: {
+          show: !compact, // on a phone the band is narrower than its name; the legend explains it
+          position: "insideTop",
+          distance: 6,
+          formatter: ACTIONS[code].name,
+          color: ink,
+          fontSize: 13,
+          fontWeight: 600,
+          textBorderWidth: 0,
+          overflow: "truncate",
+        },
+      },
+      { xAxis: b },
+    ]),
+  );
   const byStart = new Map(slots.map((s) => [s[0], s]));
+  const dot = (color: string) =>
+    `<span style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:${color}"></span>`;
 
   return {
     grid: grids,
     xAxis: [x(0, false), x(1, false), x(2, true)],
     yAxis: [
-      { type: "value", gridIndex: 0, name: "ct/kWh", ...axisStyle(), splitNumber: 3 },
-      { type: "value", gridIndex: 1, name: "Akku %", min: 0, max: 100, interval: 50, ...axisStyle() },
-      { type: "value", gridIndex: 2, name: "kW", min: 0, ...axisStyle(), splitNumber: 2 },
+      y(0, "Strompreis in ct/kWh", { splitNumber: 4 }),
+      y(1, "Akku in %", { min: 0, max: 100, interval: 50 }),
+      y(2, "PV und Verbrauch in kW", { min: 0, splitNumber: 2 }),
     ],
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     dataZoom: [{ type: "inside", xAxisIndex: [0, 1, 2], minValueSpan: 3 * 3600_000 }],
     tooltip: {
       trigger: "axis",
+      textStyle: { fontSize: 14 },
       formatter: (params: { axisValue: number }[]) => {
         const t = params[0]?.axisValue;
         if (t == null) return "";
         const s = byStart.get(t - (t % QUARTER_MS)) ?? byStart.get(t - QUARTER_MS - (t % QUARTER_MS));
         if (!s) return "";
         const a = ACTIONS[s[5]] ?? ACTIONS.n;
-        const charge = s[7] > 0 ? `<br>aus dem Netz: ${num(s[7], 2)} kWh` : "";
-        const wp = s[6] === "pv" ? "<br>Wärmepumpe: PV-Boost" : "";
+        const charge = s[7] > 0 ? ` · ${num(s[7], 2)} kWh aus dem Netz` : "";
+        const wp = s[6] === "pv" ? `<br>${dot(COLORS.boost)}Wärmepumpe im PV-Boost` : "";
         return (
           `<b>${when(s[0])}–${time(s[0] + QUARTER_MS)}</b><br>` +
-          `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:${a.color}"></span>${a.name} · ${ct(s[1])}${charge}<br>` +
-          `1 kWh im Akku: ${ct(s[8])}<br>` +
-          `Akku: ${s[4]} % (ohne Plan ${s[9]} %)<br>` +
-          `PV ${num(s[2], 2)} kW · Verbrauch ${num(s[3], 2)} kW${wp}`
+          `${dot(priceColor(s[1], min, max))}Strom ${ct(s[1])} (${priceLevel(s[1], min, max)})<br>` +
+          `${dot(a.color)}${a.name}${charge}<br>` +
+          `${dot(COLORS.soc)}Akku ${s[4]} % (ohne Plan ${s[9]} %) · 1 kWh darin ist ${ct(s[8])} wert<br>` +
+          `${dot(COLORS.pv)}PV ${num(s[2], 2)} kW · Verbrauch ${num(s[3], 2)} kW${wp}`
         );
       },
     },
@@ -115,13 +188,13 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         type: "bar",
         xAxisIndex: 0,
         yAxisIndex: 0,
-        barWidth: "85%",
-        barCategoryGap: "10%",
+        barWidth: "82%",
         data: slots.map((s) => ({
           value: [s[0] + QUARTER_MS / 2, s[1]],
-          itemStyle: { color: (ACTIONS[s[5]] ?? ACTIONS.n).color, borderRadius: [2, 2, 0, 0] },
+          itemStyle: { color: priceColor(s[1], min, max), borderRadius: [2, 2, 0, 0] },
         })),
         markLine: nowLine,
+        markArea: { silent: true, data: actionBands },
       },
       {
         name: "1 kWh im Akku",
@@ -130,8 +203,8 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         yAxisIndex: 0,
         step: "start",
         symbol: "none",
-        lineStyle: { width: 2, color: COLORS.value },
-        itemStyle: { color: COLORS.value },
+        lineStyle: { width: 2.5, color: ink, type: [6, 4] },
+        itemStyle: { color: ink },
         data: slots.map((s) => [s[0], s[8]]),
       },
       {
@@ -140,11 +213,11 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         xAxisIndex: 1,
         yAxisIndex: 1,
         symbol: "none",
-        lineStyle: { width: 2.5, color: COLORS.soc },
+        lineStyle: { width: 3, color: COLORS.soc },
         itemStyle: { color: COLORS.soc },
-        areaStyle: { color: COLORS.soc, opacity: 0.12 },
+        areaStyle: { color: COLORS.soc, opacity: 0.18 },
         data: slots.map((s) => [s[0] + QUARTER_MS, s[4]]),
-        markLine: { ...nowLine, data: nowLine.data.slice(0, 1).map((d) => ({ ...d, label: { show: false } })) },
+        markLine: { ...nowLine, data: nowLine.data.slice(0, 1) },
       },
       {
         name: "Akku ohne Plan",
@@ -152,7 +225,7 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         xAxisIndex: 1,
         yAxisIndex: 1,
         symbol: "none",
-        lineStyle: { width: 1.5, type: "dashed", color: COLORS.socWithout },
+        lineStyle: { width: 2, type: "dashed", color: COLORS.socWithout },
         itemStyle: { color: COLORS.socWithout },
         data: slots.map((s) => [s[0] + QUARTER_MS, s[9]]),
       },
@@ -163,14 +236,23 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         yAxisIndex: 2,
         symbol: "none",
         smooth: 0.3,
-        lineStyle: { width: 1.5, color: COLORS.pv },
+        lineStyle: { width: 2, color: COLORS.pv },
         itemStyle: { color: COLORS.pv },
         areaStyle: { color: COLORS.pv, opacity: 0.3 },
         data: slots.map((s) => [s[0] + QUARTER_MS / 2, s[2]]),
+        markLine: { ...nowLine, data: nowLine.data.slice(0, 1) },
         markArea: {
           silent: true,
-          itemStyle: { color: COLORS.boost, opacity: 0.14 },
-          label: { show: true, position: "insideTop", formatter: "PV-Boost", color: COLORS.boost, fontSize: 10 },
+          itemStyle: { color: COLORS.boost, opacity: 0.2 },
+          label: {
+            show: !compact,
+            position: "insideTop",
+            formatter: "PV-Boost",
+            color: ink,
+            fontSize: 13,
+            fontWeight: 600,
+            textBorderWidth: 0,
+          },
           data: boost.map(([a, b]) => [{ xAxis: a }, { xAxis: b }]),
         },
       },
@@ -181,7 +263,7 @@ export function planOption(slots: SlotRow[], now: number, accent = "#03a9f4"): C
         yAxisIndex: 2,
         step: "start",
         symbol: "none",
-        lineStyle: { width: 1.5, color: COLORS.load },
+        lineStyle: { width: 2, color: COLORS.load },
         itemStyle: { color: COLORS.load },
         data: slots.map((s) => [s[0], s[3]]),
       },

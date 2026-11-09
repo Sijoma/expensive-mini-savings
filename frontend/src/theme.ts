@@ -6,18 +6,18 @@ export const ACTIONS: Record<
   string,
   { name: string; sentence: string; icon: string; color: string }
 > = {
-  n: { name: "Eigenverbrauch", sentence: "Der Akku läuft normal", icon: "mdi:battery-sync", color: "#9a9a94" },
+  n: { name: "Eigenverbrauch", sentence: "Der Akku läuft normal", icon: "mdi:battery-sync", color: "#8d9499" },
   h: {
     name: "Entladung gesperrt",
     sentence: "Der Akku hält seine Ladung",
     icon: "mdi:battery-lock",
-    color: "#3987e5",
+    color: "#488fc2",
   },
   l: {
     name: "Laden aus dem Netz",
     sentence: "Der Akku lädt aus dem Netz",
     icon: "mdi:transmission-tower-import",
-    color: "#d95926",
+    color: "#e0457b",
   },
   f: { name: "Angehalten", sentence: "Der Akku ist angehalten", icon: "mdi:battery-lock", color: "#6aa6ef" },
   e: {
@@ -33,21 +33,28 @@ export const NAME_TO_CODE: Record<string, string> = Object.fromEntries(
   Object.entries(ACTIONS).map(([code, a]) => [a.name, code]),
 );
 
+/** Colors follow the Home Assistant energy dashboard (solar orange, battery teal, grid blue, battery
+ * charging pink, exported solar purple); prices use the usual green → amber → red scale. */
 export const COLORS = {
-  value: "#2e9d4a",
-  soc: "#7a6ee0",
-  socWithout: "#9a9a95",
-  pv: "#e0a100",
-  load: "#8a8a85",
-  boost: "#c2255c",
-  measured: "#2e9d4a",
-  forecast: "#a8a8a3",
+  value: "#00897b",
+  soc: "#26a69a",
+  socWithout: "#8d9499",
+  pv: "#ff9800",
+  load: "#607d8b",
+  boost: "#8353d1",
+  measured: "#0f9d58",
+  forecast: "#a8adb3",
+  cheap: "rgb(46,157,74)",
+  middle: "rgb(242,183,5)",
+  expensive: "rgb(217,68,47)",
 };
 
 /** Shared look, following the Home Assistant theme variables. */
 export const cardStyles = css`
   :host {
     display: block;
+    font-size: 1rem;
+    line-height: 1.45;
     --ems-accent: color-mix(in srgb, var(--primary-color, #03a9f4) 70%, black);
   }
   .card {
@@ -55,13 +62,13 @@ export const cardStyles = css`
     border-radius: var(--ha-card-border-radius, 12px);
     border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color, #e0e0e0));
     box-shadow: var(--ha-card-box-shadow, none);
-    padding: 16px;
+    padding: 20px;
     box-sizing: border-box;
     min-width: 0;
   }
   h2 {
-    margin: 0 0 12px;
-    font-size: 1.15rem;
+    margin: 0 0 14px;
+    font-size: 1.3rem;
     font-weight: 600;
     display: flex;
     align-items: center;
@@ -69,14 +76,14 @@ export const cardStyles = css`
     letter-spacing: -0.005em;
   }
   h2 ha-icon {
-    --mdc-icon-size: 20px;
+    --mdc-icon-size: 24px;
     color: var(--secondary-text-color);
   }
   .muted {
     color: var(--secondary-text-color);
   }
   .small {
-    font-size: 0.875rem;
+    font-size: 0.9rem;
   }
   .num-tab {
     font-variant-numeric: tabular-nums;
@@ -130,7 +137,7 @@ export const cardStyles = css`
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-variant-numeric: tabular-nums;
   }
   th,
@@ -159,7 +166,7 @@ export const cardStyles = css`
     gap: 6px;
     padding: 2px 10px 2px 8px;
     border-radius: 999px;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     white-space: nowrap;
     color: var(--primary-text-color);
     background: color-mix(in srgb, var(--pill, #9a9a94) 18%, transparent);
@@ -221,13 +228,13 @@ export const cardStyles = css`
     gap: 2px;
   }
   .kpi .value {
-    font-size: 1.4rem;
+    font-size: 1.7rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .kpi .label {
     color: var(--secondary-text-color);
-    font-size: 0.875rem;
+    font-size: 0.95rem;
   }
   details summary {
     cursor: pointer;
