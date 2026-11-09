@@ -37,17 +37,22 @@ class MeasurementRecorder:
         self.hass = hass
         self.conf = conf
         self.names = {
-            conf[CONF_LOAD_POWER]: "last",
-            conf[CONF_PV_POWER]: "pv",
-            conf[CONF_BATTERY_POWER]: "akku",
-            conf[CONF_GRID_POWER]: "netz",
+            entity_id: name
+            for entity_id, name in (
+                (conf.get(CONF_LOAD_POWER), "last"),
+                (conf.get(CONF_PV_POWER), "pv"),
+                (conf.get(CONF_BATTERY_POWER), "akku"),
+                (conf.get(CONF_GRID_POWER), "netz"),
+            )
+            if entity_id
         }
         self.folder = Path(hass.config.path("ems", "messung"))
         self.writer = MeasurementWriter(dt_util.now())
         self._unsubscribe: list[Callable[[], None]] = []
 
     def _value(self, key: str) -> Any:
-        z = self.hass.states.get(self.conf[key])
+        entity_id = self.conf.get(key)
+        z = self.hass.states.get(entity_id) if entity_id else None
         return z.state if z else None
 
     @callback

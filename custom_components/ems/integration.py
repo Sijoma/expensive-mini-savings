@@ -1,23 +1,25 @@
-"""Setup from configuration.yaml:
+"""Setup from the dialog (Settings → Devices & services) or from configuration.yaml:
 
     ems:
       einspeisung_ct: 7      # feed-in compensation, optional
       aufzeichnung: true     # write inputs hourly to /config/ems/aufzeichnung/
       messung: true          # write measurements per quarter hour to /config/ems/messung/
 
-Input entities can be overridden (keys see const.DEFAULTS).
+Input entities can be overridden (keys see const.DEFAULTS). YAML is imported into the config entry on
+every start and takes precedence over options set in the dialog.
 """
 
 from __future__ import annotations
 
 import voluptuous as vol
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.typing import ConfigType
 
+from .config_flow import merged_config
 from .const import (
     CONF_FEED_IN_CT,
     CONF_MEASUREMENT,
@@ -29,6 +31,8 @@ from .const import (
 )
 from .coordinator import EmsCoordinator
 from .recorder import MeasurementRecorder
+
+PLATFORMS = [Platform.SENSOR]
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -46,18 +50,27 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    conf = config.get(DOMAIN)
-    if conf is None:
-        return True
-    coordinator = EmsCoordinator(hass, conf)
-    hass.data[DOMAIN] = coordinator
+    """configuration.yaml → config entry (import). The entry is then set up like one from the dialog."""
+    if DOMAIN in config:
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT}, data=config[DOMAIN]
+            )
+        )
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    conf = merged_config(entry)
+    coordinator = EmsCoordinator(hass, conf, entry)
+    entry.runtime_data = coordinator
 
     @callback
     def replan(*_: object) -> None:
         hass.async_create_task(coordinator.async_request_refresh())
 
     # every 15 min shortly after the quarter hour starts, on new prices and on changed settings
-    unsubscribe = [async_track_time_change(hass, replan, minute=[0, 15, 30, 45], second=10)]
+    entry.async_on_unload(async_track_time_change(hass, replan, minute=[0, 15, 30, 45], second=10))
 
     @callback
     def input_changed(event: Event) -> None:
@@ -65,26 +78,28 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if old is None or new is None or old.state != new.state or old.attributes != new.attributes:
             replan()
 
-    unsubscribe.append(
-        async_track_state_change_event(hass, [conf[CONF_PRICES], conf[CONF_WEAR]], input_changed)
-    )
+    watched = [e for e in (conf.get(CONF_PRICES), conf.get(CONF_WEAR)) if e]
+    entry.async_on_unload(async_track_state_change_event(hass, watched, input_changed))
 
-    if conf[CONF_MEASUREMENT]:
+    if conf.get(CONF_MEASUREMENT):
         measurement = MeasurementRecorder(hass, conf)
         measurement.begin()
-        unsubscribe.append(measurement.stop)
-
-    @callback
-    def stop(_: Event) -> None:
-        for f in unsubscribe:
-            f()
-
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+        entry.async_on_unload(measurement.stop)
 
     if hass.is_running:
         await coordinator.async_refresh()
     else:
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, replan)
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, replan))
 
-    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_reload_on_change))
     return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _reload_on_change(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Options or YAML changed: set the entry up again with the new configuration."""
+    await hass.config_entries.async_reload(entry.entry_id)

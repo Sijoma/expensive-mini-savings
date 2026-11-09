@@ -5,29 +5,27 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
 from .coordinator import EmsCoordinator
 from .core.explanation import NAMES
 
 
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    if discovery_info is None:
-        return
-    coordinator: EmsCoordinator = hass.data[DOMAIN]
+    coordinator: EmsCoordinator = entry.runtime_data
     async_add_entities([PlanSensor(coordinator), ValueSensor(coordinator), HeatPumpSensor(coordinator)])
 
 
-class PlanSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
+class _EmsSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
+    """Common base. No device on purpose: entity IDs stay sensor.ems_* for new installations too."""
+
+
+class PlanSensor(_EmsSensor):
     _attr_name = "EMS Plan Akku neu"
     _attr_unique_id = "ems_neu_plan_akku"
     _attr_icon = "mdi:battery-sync"
@@ -47,7 +45,7 @@ class PlanSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
         return self.coordinator.data.attribute if self.coordinator.data else None
 
 
-class ValueSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
+class ValueSensor(_EmsSensor):
     """What one kWh in the battery is currently worth: the basis of every decision."""
 
     _attr_name = "EMS Wert Akku"
@@ -66,7 +64,7 @@ class ValueSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
         return self.coordinator.data.attribute["wert_jetzt_ct"] if self.coordinator.data else None
 
 
-class HeatPumpSensor(CoordinatorEntity[EmsCoordinator], SensorEntity):
+class HeatPumpSensor(_EmsSensor):
     """Heat pump PV boost (planning only; switching is done by a separate SG Ready automation)."""
 
     _attr_name = "EMS Plan Wärmepumpe neu"

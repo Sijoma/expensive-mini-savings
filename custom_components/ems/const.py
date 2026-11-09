@@ -47,3 +47,30 @@ DEFAULTS = {
     CONF_FORCED: "select.battery_forced_charge_discharge",
     CONF_DISCHARGE_MAX: "number.battery_max_discharge_power",
 }
+
+# Order of the fields in the setup dialog
+PLANNER_KEYS = (
+    CONF_PRICES,
+    CONF_PV,
+    CONF_LOAD_PROFILE,
+    CONF_SOC,
+    CONF_CAPACITY,
+    CONF_RESERVE,
+    CONF_WEAR,
+    CONF_GRID_CHARGE_POWER,
+    CONF_TARGET,
+)
+MEASUREMENT_KEYS = (
+    CONF_LOAD_POWER,
+    CONF_PV_POWER,
+    CONF_BATTERY_POWER,
+    CONF_GRID_POWER,
+    CONF_PRICE_NOW,
+    CONF_EMS_MODE,
+    CONF_FORCED,
+    CONF_DISCHARGE_MAX,
+)
+REQUIRED_KEYS = (CONF_PRICES, CONF_SOC)
+"""Without these the planner cannot run; all other inputs have fallbacks."""
+
+OPTION_DEFAULTS = {**DEFAULTS, CONF_FEED_IN_CT: 7.0, CONF_RECORDING: True, CONF_MEASUREMENT: True}

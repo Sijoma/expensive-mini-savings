@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from conftest import EXAMPLE, load_case
-from ems.adapter import battery_from, build_slots, laufende_aktion, plan_attributes
+from ems.adapter import battery_from, build_slots, plan_attributes, running_action
 from ems.core.explanation import create_plan
 from ems.core.forecast import PV_EFFICIENCY, prepare
 from ems.core.model import Action, Battery, Tariff
@@ -95,7 +95,7 @@ def test_lower_bound_is_backup_reserve():
     ],
 )
 def test_running_action(target, minutes_ago, expected):
-    assert laufende_aktion(target, NOW - timedelta(minutes=minutes_ago), NOW) == expected
+    assert running_action(target, NOW - timedelta(minutes=minutes_ago), NOW) == expected
 
 
 def test_attributes_keep_the_interface(ha_states):

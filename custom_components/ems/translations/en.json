@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Planner inputs",
+        "description": "Prices, PV forecast, consumption and battery. Only prices and state of charge are required.",
+        "data": {
+          "preise": "Prices (attribute preise = [[ms, ct], …])",
+          "pv_prognose": "PV forecast (attribute forecast, 15 min)",
+          "lastprofil": "Load profile (attribute profil, 24 values in W)",
+          "soc": "Battery state of charge (usable range, %)",
+          "kapazitaet": "Battery capacity (kWh)",
+          "reserve": "Backup reserve (%), lower bound",
+          "verschleiss": "Battery wear (ct per kWh taken out)",
+          "netzladeleistung": "Grid charging power (kW)",
+          "soll": "What the executor currently does (optional)",
+          "einspeisung_ct": "Feed-in compensation",
+          "aufzeichnung": "Record inputs and plan hourly (/config/ems/aufzeichnung)"
+        }
+      },
+      "measurement": {
+        "title": "Recording",
+        "description": "Optional: measurements per quarter hour for calibration and backtests.",
+        "data": {
+          "messung": "Record measurements per quarter hour (/config/ems/messung)",
+          "last_leistung": "House consumption (W)",
+          "pv_leistung": "PV power (W)",
+          "akku_leistung": "Battery power (W, + discharging)",
+          "netz_leistung": "Grid power (W, + import)",
+          "preis_jetzt": "Current price (€/kWh)",
+          "ems_modus": "Inverter EMS mode",
+          "erzwungen": "Forced charge/discharge",
+          "entladen_max": "Max. discharge power"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Expensive Mini Savings is already set up.",
+      "single_instance_allowed": "Expensive Mini Savings is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Planner inputs",
+        "description": "Prices, PV forecast, consumption and battery. Only prices and state of charge are required.",
+        "data": {
+          "preise": "Prices (attribute preise = [[ms, ct], …])",
+          "pv_prognose": "PV forecast (attribute forecast, 15 min)",
+          "lastprofil": "Load profile (attribute profil, 24 values in W)",
+          "soc": "Battery state of charge (usable range, %)",
+          "kapazitaet": "Battery capacity (kWh)",
+          "reserve": "Backup reserve (%), lower bound",
+          "verschleiss": "Battery wear (ct per kWh taken out)",
+          "netzladeleistung": "Grid charging power (kW)",
+          "soll": "What the executor currently does (optional)",
+          "einspeisung_ct": "Feed-in compensation",
+          "aufzeichnung": "Record inputs and plan hourly (/config/ems/aufzeichnung)"
+        }
+      },
+      "measurement": {
+        "title": "Recording",
+        "description": "Optional: measurements per quarter hour for calibration and backtests.",
+        "data": {
+          "messung": "Record measurements per quarter hour (/config/ems/messung)",
+          "last_leistung": "House consumption (W)",
+          "pv_leistung": "PV power (W)",
+          "akku_leistung": "Battery power (W, + discharging)",
+          "netz_leistung": "Grid power (W, + import)",
+          "preis_jetzt": "Current price (€/kWh)",
+          "ems_modus": "Inverter EMS mode",
+          "erzwungen": "Forced charge/discharge",
+          "entladen_max": "Max. discharge power"
+        }
+      }
+    },
+    "abort": {
+      "yaml": "This entry comes from configuration.yaml (`ems:`), which takes precedence. Current settings:\n\n{settings}\n\nTo change them, edit configuration.yaml and restart. To manage them here instead, remove `ems:` from configuration.yaml."
+    }
+  }
+}

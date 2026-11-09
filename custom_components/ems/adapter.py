@@ -93,7 +93,7 @@ def battery_from(capacity: Any, reserve: Any, wear: Any, grid_charge_kw: Any) ->
     )
 
 
-def laufende_aktion(target: str | None, since: datetime | None, now: datetime) -> tuple[Action | None, int]:
+def running_action(target: str | None, since: datetime | None, now: datetime) -> tuple[Action | None, int]:
     """What the EMS currently wants at the battery (sensor.ems_akku_soll) and for how many quarter hours."""
     names = {v: k for k, v in NAMES.items()}
     action = names.get(target or "")
@@ -150,17 +150,17 @@ def plan_attributes(plan: Plan, battery: Battery, computed: datetime, runtime_ms
         }
         for b in plan.blocks
     ]
-    wp_aktionen, start = [], None
+    heat_pump_actions, start = [], None
     for i, b in enumerate([*plan.boost, False]):
         if b and start is None:
             start = i
         elif not b and start is not None:
-            wp_aktionen.append({"von": ms[start], "bis": ms[i - 1] + QUARTER_MS, "was": "pv"})
+            heat_pump_actions.append({"von": ms[start], "bis": ms[i - 1] + QUARTER_MS, "was": "pv"})
             start = None
     return {
         "slots": rows,
         "aktionen": actions,
-        "wp_aktionen": wp_aktionen,
+        "wp_aktionen": heat_pump_actions,
         "grund": plan.reason_now,
         "wert_jetzt_ct": round(plan.value_ct[0], 1) if plan.value_ct else None,
         "ersparnis_eur": round(plan.saves_ct / 100, 2),

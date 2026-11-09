@@ -4,13 +4,14 @@
   "codeowners": [
     "@Sijoma"
   ],
-  "config_flow": false,
+  "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Sijoma/expensive-mini-savings",
+  "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Sijoma/expensive-mini-savings/issues",
   "requirements": [
     "numpy>=2.0"
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

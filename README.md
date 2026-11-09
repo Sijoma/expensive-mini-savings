@@ -72,8 +72,13 @@ Releases: bump `version` in `custom_components/ems/manifest.json` and push a tag
 
 ## Setup
 
+Either in the UI: **Settings → Devices & services → Add integration → Expensive Mini Savings**. The dialog
+asks for the input entities (only prices and state of charge are required) and the recording options;
+change them later with *Configure*.
+
+Or in `configuration.yaml` (imported into the same entry on every start; YAML then takes precedence):
+
 ```yaml
-# configuration.yaml
 ems:
   einspeisung_ct: 7          # feed-in compensation in ct/kWh
   # every input entity can be overridden, see custom_components/ems/const.py (DEFAULTS)

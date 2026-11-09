@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Eingaben des Planers",
+        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig sind nur Preise und Akkustand.",
+        "data": {
+          "preise": "Preise (Attribut preise = [[ms, ct], …])",
+          "pv_prognose": "PV-Prognose (Attribut forecast, 15 min)",
+          "lastprofil": "Lastprofil (Attribut profil, 24 Werte in W)",
+          "soc": "Akkustand (nutzbarer Bereich, %)",
+          "kapazitaet": "Akku-Kapazität (kWh)",
+          "reserve": "Notstrom-Reserve (%), Untergrenze",
+          "verschleiss": "Akku-Verschleiß (ct je entnommener kWh)",
+          "netzladeleistung": "Netz-Ladeleistung (kW)",
+          "soll": "Was die Ausführung gerade tut (optional)",
+          "einspeisung_ct": "Einspeisevergütung",
+          "aufzeichnung": "Eingaben und Plan stündlich aufzeichnen (/config/ems/aufzeichnung)"
+        }
+      },
+      "measurement": {
+        "title": "Aufzeichnung",
+        "description": "Optional: Messwerte je Viertelstunde für Kalibrierung und Backtests.",
+        "data": {
+          "messung": "Messwerte je Viertelstunde aufzeichnen (/config/ems/messung)",
+          "last_leistung": "Hausverbrauch (W)",
+          "pv_leistung": "PV-Leistung (W)",
+          "akku_leistung": "Akku-Leistung (W, + entladen)",
+          "netz_leistung": "Netz-Leistung (W, + Bezug)",
+          "preis_jetzt": "Aktueller Preis (€/kWh)",
+          "ems_modus": "EMS-Modus des Wechselrichters",
+          "erzwungen": "Erzwungenes Laden/Entladen",
+          "entladen_max": "Max. Entladeleistung"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Expensive Mini Savings ist schon eingerichtet.",
+      "single_instance_allowed": "Expensive Mini Savings ist schon eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Eingaben des Planers",
+        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig sind nur Preise und Akkustand.",
+        "data": {
+          "preise": "Preise (Attribut preise = [[ms, ct], …])",
+          "pv_prognose": "PV-Prognose (Attribut forecast, 15 min)",
+          "lastprofil": "Lastprofil (Attribut profil, 24 Werte in W)",
+          "soc": "Akkustand (nutzbarer Bereich, %)",
+          "kapazitaet": "Akku-Kapazität (kWh)",
+          "reserve": "Notstrom-Reserve (%), Untergrenze",
+          "verschleiss": "Akku-Verschleiß (ct je entnommener kWh)",
+          "netzladeleistung": "Netz-Ladeleistung (kW)",
+          "soll": "Was die Ausführung gerade tut (optional)",
+          "einspeisung_ct": "Einspeisevergütung",
+          "aufzeichnung": "Eingaben und Plan stündlich aufzeichnen (/config/ems/aufzeichnung)"
+        }
+      },
+      "measurement": {
+        "title": "Aufzeichnung",
+        "description": "Optional: Messwerte je Viertelstunde für Kalibrierung und Backtests.",
+        "data": {
+          "messung": "Messwerte je Viertelstunde aufzeichnen (/config/ems/messung)",
+          "last_leistung": "Hausverbrauch (W)",
+          "pv_leistung": "PV-Leistung (W)",
+          "akku_leistung": "Akku-Leistung (W, + entladen)",
+          "netz_leistung": "Netz-Leistung (W, + Bezug)",
+          "preis_jetzt": "Aktueller Preis (€/kWh)",
+          "ems_modus": "EMS-Modus des Wechselrichters",
+          "erzwungen": "Erzwungenes Laden/Entladen",
+          "entladen_max": "Max. Entladeleistung"
+        }
+      }
+    },
+    "abort": {
+      "yaml": "Dieser Eintrag kommt aus configuration.yaml (`ems:`), YAML hat Vorrang. Aktuelle Einstellungen:\n\n{settings}\n\nÄndern: in configuration.yaml und neu starten. Um sie hier zu verwalten, `ems:` aus configuration.yaml entfernen."
+    }
+  }
+}

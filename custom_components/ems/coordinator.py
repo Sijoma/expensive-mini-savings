@@ -10,11 +10,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .adapter import battery_from, build_slots, laufende_aktion, number, plan_attributes
+from .adapter import battery_from, build_slots, number, plan_attributes, running_action
 from .const import (
     CONF_CAPACITY,
     CONF_FEED_IN_CT,
@@ -41,13 +42,14 @@ class Result:
 
 
 class EmsCoordinator(DataUpdateCoordinator[Result]):
-    def __init__(self, hass: HomeAssistant, conf: dict[str, Any]) -> None:
-        super().__init__(hass, _LOGGER, name="EMS", update_interval=None)
+    def __init__(self, hass: HomeAssistant, conf: dict[str, Any], entry: ConfigEntry) -> None:
+        super().__init__(hass, _LOGGER, config_entry=entry, name="EMS", update_interval=None)
         self.conf = conf
         self._last_recording: str | None = None
 
     def _state(self, key: str) -> Any:
-        return self.hass.states.get(self.conf[key])
+        entity_id = self.conf.get(key)
+        return self.hass.states.get(entity_id) if entity_id else None
 
     def _attribute(self, key: str, attribute_name: str) -> Any:
         z = self._state(key)
@@ -78,10 +80,10 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
             raise UpdateFailed("battery state of charge unknown")
         e0 = soc / 100 * battery.capacity_kwh
         target = self._state(CONF_TARGET)
-        running, since = laufende_aktion(
+        running, since = running_action(
             target.state if target else None, target.last_changed if target else None, now
         )
-        tariff = Tariff(feed_in_ct=self.conf[CONF_FEED_IN_CT])
+        tariff = Tariff(feed_in_ct=float(self.conf.get(CONF_FEED_IN_CT, 7.0)))
 
         t0 = time.perf_counter()
         plan = await self.hass.async_add_executor_job(
@@ -90,7 +92,7 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
         runtime = (time.perf_counter() - t0) * 1000
         attribute = plan_attributes(plan, battery, now, runtime)
 
-        if self.conf[CONF_RECORDING]:
+        if self.conf.get(CONF_RECORDING):
             await self._record(now, soc, running, since, plan, attribute)
         return Result(plan, attribute)
 
