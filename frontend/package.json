@@ -1,0 +1,20 @@
+{
+  "name": "ems-panel",
+  "private": true,
+  "type": "module",
+  "description": "The EMS app: a Home Assistant sidebar panel for the expensive-mini-savings integration",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "TZ=Europe/Berlin vitest run"
+  },
+  "dependencies": {
+    "echarts": "6.0.0",
+    "lit": "3.3.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2",
+    "vite": "7.1.5",
+    "vitest": "3.2.4"
+  }
+}

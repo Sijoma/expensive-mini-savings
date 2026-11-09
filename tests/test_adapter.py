@@ -26,9 +26,9 @@ def ha_states():
 
 def slots_from(ha_states, now=NOW):
     return build_slots(
-        ha_states["sensor.strompreis_15_min"]["attributes"]["preise"],
-        ha_states["sensor.dach_ost_west_power_now"]["attributes"]["forecast"],
-        ha_states["sensor.ems_lastprofil"]["attributes"]["profil"],
+        ha_states["sensor.electricity_prices"]["attributes"]["preise"],
+        ha_states["sensor.pv_forecast"]["attributes"]["forecast"],
+        ha_states["sensor.load_profile"]["attributes"]["profil"],
         now,
     )
 
@@ -42,15 +42,13 @@ def test_horizon_from_current_quarter_to_end_of_prices(ha_states):
 
 
 def test_load_from_profile_times_factor(ha_states):
-    profile = ha_states["sensor.ems_lastprofil"]["attributes"]["profil"]
+    profile = ha_states["sensor.load_profile"]["attributes"]["profil"]
     s = slots_from(ha_states)[0]
     assert s.load_kw == pytest.approx(profile[22] / 1000 * 1.1)
 
 
 def test_noon_pv_converted_to_ac_with_p10(ha_states):
-    forecast = {
-        f["datetime"]: f for f in ha_states["sensor.dach_ost_west_power_now"]["attributes"]["forecast"]
-    }
+    forecast = {f["datetime"]: f for f in ha_states["sensor.pv_forecast"]["attributes"]["forecast"]}
     noon = next(s for s in slots_from(ha_states) if s.start.hour == 12 and s.start.minute == 0)
     f = forecast[noon.start.isoformat()]
     p10 = f["p10"] if f["p10"] is not None else f["watts"]
@@ -65,7 +63,7 @@ def test_broken_inputs_give_no_slots():
 
 
 def test_plannable_without_pv_forecast(ha_states):
-    slots = build_slots(ha_states["sensor.strompreis_15_min"]["attributes"]["preise"], None, None, NOW)
+    slots = build_slots(ha_states["sensor.electricity_prices"]["attributes"]["preise"], None, None, NOW)
     assert len(slots) == 102
     assert all(s.pv_kw == 0 for s in slots)
 

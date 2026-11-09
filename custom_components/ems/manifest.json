@@ -1,11 +1,17 @@
 {
   "domain": "ems",
   "name": "Expensive Mini Savings",
+  "after_dependencies": [
+    "frontend",
+    "panel_custom"
+  ],
   "codeowners": [
     "@Sijoma"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "http"
+  ],
   "documentation": "https://github.com/Sijoma/expensive-mini-savings",
   "integration_type": "service",
   "iot_class": "calculated",
@@ -13,5 +19,5 @@
   "requirements": [
     "numpy>=2.0"
   ],
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

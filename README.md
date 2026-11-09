@@ -8,11 +8,18 @@ with surplus that would otherwise be exported.
 The name is honest: on a 10 kWh battery with a dynamic tariff the savings are real but small
 (in the author's house about 13 % of the energy cost over the first ten days in the backtest).
 
-> **Status: personal project.** It runs in one house (Sungrow SH15T + SBH100 battery via the
-> [mkaiser Modbus integration](https://github.com/mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant),
-> Tibber prices, Helios PV forecast). Default entity IDs, configuration keys, attribute names and the texts
-> shown in Home Assistant are German. It is shared as a reference, not as a ready-made integration.
-> Pull requests that make it more general are welcome.
+> **Status: early, built for one house.** Tested with a Sungrow SH15T hybrid inverter and SBH100
+> battery (via the [mkaiser Modbus integration](https://github.com/mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant)),
+> Tibber 15-minute prices and the Helios PV forecast. Other setups work if they provide the [inputs](#inputs)
+> in the same format.
+
+- **It only plans.** It creates sensors with the plan. Switching the inverter is up to you (an automation
+  that follows `sensor.ems_plan_akku_neu`); nothing is ever written to your devices.
+- **German names.** Configuration keys (`preise`, `soc`, …), attribute names and the states and reasons
+  shown in Home Assistant are German, because the author's automations and dashboard depend on them.
+  The setup dialog is translated (English, German).
+- **Comes with an app**: an *EMS* page in the sidebar, see [App](#app).
+- Issues and pull requests for other inverters, price sources or forecasts are welcome.
 
 ## How it works
 
@@ -51,10 +58,13 @@ custom_components/ems/        the Home Assistant integration (copy this folder t
   coordinator.py              reads inputs, plans in a worker thread, hourly recording of inputs
   recorder.py, measurement.py measurements per quarter hour → /config/ems/messung/
   sensor.py                   plan, value of one kWh, heat pump plan
+  panel.py, history.py        the app: sidebar panel, websocket commands, plan against reality
 backtest/                     not part of the integration
   export.py                   fetch raw history from HA and aggregate per quarter hour
   fetch.py                    fetch the integration's recordings
   run.py                      backtest: replan every 15 min, execute against measurements
+examples/inputs.yaml          template sensors for prices and load profile
+frontend/                     the app (TypeScript, Lit, ECharts) → custom_components/ems/frontend/
 tests/                        pytest + hypothesis; tests/ha runs in a test Home Assistant
   example/                    made-up example inputs (generate.py)
 ```
@@ -76,26 +86,82 @@ Either in the UI: **Settings → Devices & services → Add integration → Expe
 asks for the input entities (only prices and state of charge are required) and the recording options;
 change them later with *Configure*.
 
-Or in `configuration.yaml` (imported into the same entry on every start; YAML then takes precedence):
+Or in `configuration.yaml` (imported into the same entry on every start; YAML then takes precedence and
+*Configure* only shows the settings):
 
 ```yaml
 ems:
-  einspeisung_ct: 7          # feed-in compensation in ct/kWh
-  # every input entity can be overridden, see custom_components/ems/const.py (DEFAULTS)
+  preise: sensor.electricity_prices       # required
+  pv_prognose: sensor.solar_forecast_power_now
+  lastprofil: sensor.load_profile
+  einspeisung_ct: 7                       # feed-in compensation in ct/kWh
+  # the Sungrow entities below have defaults and can be overridden the same way
 ```
 
-Inputs it expects (attribute names as in the author's setup):
+### Inputs
 
-| Input | Default entity | Format |
+Only `preise` and `soc` are required; every other input falls back to the value in the last column.
+Defaults exist only for the entities the mkaiser Sungrow integration creates.
+
+| Key | What | Format | Default entity | Without it |
+|---|---|---|---|---|
+| `preise` | prices per quarter hour, today and (from ~13:00) tomorrow; the plan reaches as far as the prices | attribute `preise` = `[[start in ms since epoch, ct/kWh], …]`, gross price incl. all fees | – | no plan |
+| `soc` | battery state of charge | state in %, **usable range** (0 % = the inverter's min SoC) | `sensor.battery_level` | no plan |
+| `pv_prognose` | PV forecast | attribute `forecast` = `[{"datetime": ISO time, "watts": W, "p10": W}, …]` per 15 min, DC (as Helios provides it); `p10` optional | – | no PV |
+| `lastprofil` | expected house consumption per hour of day | attribute `profil` = 24 values in W, index = local hour | – | 500 W flat |
+| `kapazitaet` | usable battery capacity | state in kWh | `sensor.battery_capacity_high_precision` | 10.13 kWh |
+| `reserve` | backup reserve, lower bound for the plan | state in % (same scale as `soc`) | `number.battery_reserved_soc_for_backup` | 0 % |
+| `verschleiss` | battery wear | state in ct per kWh taken out | – | 10 ct |
+| `netzladeleistung` | power when charging from the grid | state in kW (max. 5) | – | 5 kW |
+| `soll` | what your automation currently applies, so a running hold is not toggled | state `Eigenverbrauch`, `Entladung gesperrt` or `Laden aus dem Netz` | – | assumes normal |
+| `einspeisung_ct` | feed-in compensation | number in ct/kWh | – | 7 |
+
+[`examples/inputs.yaml`](examples/inputs.yaml) has template sensors for `preise` (from the Tibber integration)
+and `lastprofil` (learned from a total energy meter).
+
+Measurements (`messung: true`, written per quarter hour to `/config/ems/messung/`, used for backtests):
+`last_leistung` (`sensor.load_power`), `pv_leistung` (`sensor.total_dc_power`), `akku_leistung`
+(`sensor.battery_power`, + discharging), `netz_leistung` (`sensor.meter_active_power`, + import), all in W;
+`preis_jetzt` (current price, no default); `ems_modus`, `erzwungen`, `entladen_max` (inverter mode,
+forced mode, discharge limit; Sungrow defaults). `aufzeichnung: true` additionally stores the inputs and the
+plan once per hour in `/config/ems/aufzeichnung/`.
+
+### Entities
+
+| Entity | State | Main attributes |
 |---|---|---|
-| prices | `sensor.strompreis_15_min` | attribute `preise` = `[[ms, ct], …]` |
-| PV forecast | `sensor.dach_ost_west_power_now` | attribute `forecast` = `[{datetime, watts, p10}, …]` per 15 min (Helios) |
-| load profile | `sensor.ems_lastprofil` | attribute `profil` = 24 values in W |
-| SoC, capacity, reserve | Sungrow entities | `sensor.battery_level` (usable range 0–100 %) |
+| `sensor.ems_plan_akku_neu` | what the battery should do now (`Eigenverbrauch`, `Entladung gesperrt`, `Laden aus dem Netz`) | `grund` (reason), `aktionen` (blocks with time, kWh, price, savings, reason), `slots` (table per quarter hour, see `adapter.plan_attributes`), `ersparnis_eur`, `berechnet`, `rechenzeit_ms` |
+| `sensor.ems_wert_akku` | value of one kWh in the battery now, ct | – |
+| `sensor.ems_plan_warmepumpe_neu` | `Normal` or `PV-Boost` | `aktionen` (boost periods) |
 
-Entities it creates: `sensor.ems_plan_akku_neu` (plan; attributes `aktionen`, `grund`, `slots`, …),
-`sensor.ems_wert_akku` (value of one kWh in the battery, ct), `sensor.ems_plan_warmepumpe_neu`.
-The `slots` attribute is a table per quarter hour, see `adapter.plan_attributes`.
+### App
+
+The integration adds an **EMS** page to the Home Assistant sidebar (also in the companion app). Nothing to
+install or configure; it updates with the integration.
+
+| Tab | Shows |
+|---|---|
+| Plan | what the battery does now and why, value of 1 kWh in the battery, one chart with price (colored by action), SoC with and without plan, PV, load and heat pump boost; planned actions with savings and reasons |
+| Ersparnis | measured savings today / week / month, per day against the forecast, booked actions |
+| Verlauf | plan against reality per day: planned and executed action, measured SoC, grid import and its cost |
+| Protokoll | decisions of the executor; logbook of mode, target, inverter and approvals with who caused each change (inverter changes without an EMS action shortly before are marked as external, e.g. VPP); state of every configured entity |
+| Einstellungen | wear and grid charge power, load profile, how the planner calculates, the configuration |
+
+Mode, approvals, savings and log come from the automation that switches the battery (the author's YAML
+package). Set their entities in the setup dialog (step *App*) or in YAML; sections without an entity are
+hidden:
+
+| Key | Entity | Format |
+|---|---|---|
+| `modus` | `input_select` | options `Nur planen`, `Mit Freigabe`, `Automatisch` |
+| `freigabe` | `binary_sensor` | `on` while an approval is pending; attribute `aktionen` = plan blocks (`von`, `bis`, `was`, `kwh`, `ct`, `spart`, `grund`) |
+| `freigabe_bis`, `freigeben`, `ablehnen` | `input_datetime`, `script`, `script` | approved until; the buttons run the scripts |
+| `ersparnis`, `ersparnis_prognose` | `sensor` (EUR, `state_class: total`) | attribute `aktionen` = `[{start, ende, was, kwh, betrag}]` |
+| `protokoll` | `sensor` | attribute `eintraege` = `[{zeit, art, text, modus, soc, preis}]`, newest first |
+
+The app is TypeScript with [Lit](https://lit.dev) and [ECharts](https://echarts.apache.org) in `frontend/`,
+built into `custom_components/ems/frontend/ems-panel.js` (`npm ci && npm run build`; CI checks that the
+shipped file matches the source).
 
 ## Tests
 

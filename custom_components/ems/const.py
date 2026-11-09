@@ -28,25 +28,30 @@ CONF_EMS_MODE = "ems_modus"
 CONF_FORCED = "erzwungen"
 CONF_DISCHARGE_MAX = "entladen_max"
 
+# Executor shown in the app (optional; today the author's YAML package does the switching)
+CONF_MODE = "modus"
+CONF_APPROVAL = "freigabe"
+CONF_APPROVED_UNTIL = "freigabe_bis"
+CONF_APPROVE = "freigeben"
+CONF_REJECT = "ablehnen"
+CONF_SAVINGS = "ersparnis"
+CONF_SAVINGS_FORECAST = "ersparnis_prognose"
+CONF_LOG = "protokoll"
+
 DEFAULTS = {
-    CONF_PRICES: "sensor.strompreis_15_min",
-    CONF_PV: "sensor.dach_ost_west_power_now",
-    CONF_LOAD_PROFILE: "sensor.ems_lastprofil",
     CONF_SOC: "sensor.battery_level",
     CONF_CAPACITY: "sensor.battery_capacity_high_precision",
     CONF_RESERVE: "number.battery_reserved_soc_for_backup",
-    CONF_WEAR: "input_number.ems_akku_verschleiss",
-    CONF_GRID_CHARGE_POWER: "input_number.ems_netzladeleistung",
-    CONF_TARGET: "sensor.ems_akku_soll",
     CONF_LOAD_POWER: "sensor.load_power",
     CONF_PV_POWER: "sensor.total_dc_power",
     CONF_BATTERY_POWER: "sensor.battery_power",
     CONF_GRID_POWER: "sensor.meter_active_power",
-    CONF_PRICE_NOW: "sensor.electricity_price",
     CONF_EMS_MODE: "select.ems_mode",
     CONF_FORCED: "select.battery_forced_charge_discharge",
     CONF_DISCHARGE_MAX: "number.battery_max_discharge_power",
 }
+"""Entity IDs created by the mkaiser Sungrow Modbus integration. Everything else (prices, PV forecast,
+load profile, wear, grid charge power, target) depends on the setup and has no default."""
 
 # Order of the fields in the setup dialog
 PLANNER_KEYS = (
@@ -70,6 +75,19 @@ MEASUREMENT_KEYS = (
     CONF_FORCED,
     CONF_DISCHARGE_MAX,
 )
+CONTROL_KEYS = (
+    CONF_MODE,
+    CONF_APPROVAL,
+    CONF_APPROVED_UNTIL,
+    CONF_APPROVE,
+    CONF_REJECT,
+    CONF_SAVINGS,
+    CONF_SAVINGS_FORECAST,
+    CONF_LOG,
+)
+"""Entities of the executor (mode, approvals, accounting, log). The app shows a section only if its
+entity is set. Formats see README (App)."""
+ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *CONTROL_KEYS)
 REQUIRED_KEYS = (CONF_PRICES, CONF_SOC)
 """Without these the planner cannot run; all other inputs have fallbacks."""
 

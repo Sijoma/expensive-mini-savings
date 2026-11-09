@@ -32,6 +32,20 @@
           "erzwungen": "Forced charge/discharge",
           "entladen_max": "Max. discharge power"
         }
+      },
+      "control": {
+        "title": "App: executor (optional)",
+        "description": "Entities of the automation that switches the battery. The EMS app shows mode, approvals, savings and log only if they are set.",
+        "data": {
+          "modus": "Mode (input_select: Nur planen / Mit Freigabe / Automatisch)",
+          "freigabe": "Approval pending (binary_sensor, attribute aktionen)",
+          "freigabe_bis": "Approved until (input_datetime)",
+          "freigeben": "Script: approve",
+          "ablehnen": "Script: reject",
+          "ersparnis": "Measured savings (sensor in EUR, attribute aktionen)",
+          "ersparnis_prognose": "Forecast savings (sensor in EUR)",
+          "protokoll": "Log (sensor, attribute eintraege)"
+        }
       }
     },
     "abort": {
@@ -71,6 +85,20 @@
           "ems_modus": "Inverter EMS mode",
           "erzwungen": "Forced charge/discharge",
           "entladen_max": "Max. discharge power"
+        }
+      },
+      "control": {
+        "title": "App: executor (optional)",
+        "description": "Entities of the automation that switches the battery. The EMS app shows mode, approvals, savings and log only if they are set.",
+        "data": {
+          "modus": "Mode (input_select: Nur planen / Mit Freigabe / Automatisch)",
+          "freigabe": "Approval pending (binary_sensor, attribute aktionen)",
+          "freigabe_bis": "Approved until (input_datetime)",
+          "freigeben": "Script: approve",
+          "ablehnen": "Script: reject",
+          "ersparnis": "Measured savings (sensor in EUR, attribute aktionen)",
+          "ersparnis_prognose": "Forecast savings (sensor in EUR)",
+          "protokoll": "Log (sensor, attribute eintraege)"
         }
       }
     },

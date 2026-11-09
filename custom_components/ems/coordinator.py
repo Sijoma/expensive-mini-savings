@@ -111,7 +111,7 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
             "laeuft": running.value if running else None,
             "seit": since,
             "slots": [
-                [r[0], r[1], r[2], r[3], round(s.spike_kw, 3)]
+                [r[0], r[1], r[2], r[3], round(s.spike_kw, 3), r[4]]
                 for r, s in zip(attribute["slots"], plan.slots, strict=True)
             ],
             "aktionen": "".join(a.value for a in plan.actions),

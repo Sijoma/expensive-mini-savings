@@ -1,4 +1,4 @@
-"""Integration in einem echten (Test-)Home-Assistant: Einrichtung, Sensoren, Aufzeichnung."""
+"""The integration in a real (test) Home Assistant: setup, sensors, recording."""
 
 from __future__ import annotations
 
@@ -12,6 +12,16 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 PLAN = "sensor.ems_plan_akku_neu"
+ENTITIES = {
+    "preise": "sensor.electricity_prices",
+    "pv_prognose": "sensor.pv_forecast",
+    "lastprofil": "sensor.load_profile",
+    "verschleiss": "input_number.battery_wear",
+    "netzladeleistung": "input_number.grid_charge_power",
+    "soll": "sensor.battery_target",
+    "preis_jetzt": "sensor.electricity_price_now",
+}
+"""The example inputs (tests/example) use these names; only the Sungrow entities have defaults."""
 VALUE = "sensor.ems_wert_akku"
 
 
@@ -21,7 +31,7 @@ async def set_up(hass, freezer, set_states, now, tmp_path):
     freezer.move_to(now)
     await hass.config.async_set_time_zone("Europe/Berlin")
     set_states(**{"sensor.battery_level": "45.0"})
-    assert await async_setup_component(hass, "ems", {"ems": {}})
+    assert await async_setup_component(hass, "ems", {"ems": ENTITIES})
     await hass.async_block_till_done()
     return hass
 
@@ -54,10 +64,10 @@ async def test_recording_is_written(set_up):
 async def test_new_prices_trigger_replanning(set_up, ha_states):
     hass = set_up
     before = hass.states.get(PLAN).attributes["slots"][0][1]
-    prices = [[t, 99.0] for t, _ in ha_states["sensor.strompreis_15_min"]["attributes"]["preise"]]
-    hass.states.async_set("sensor.strompreis_15_min", "192", {"preise": prices})
+    prices = [[t, 99.0] for t, _ in ha_states["sensor.electricity_prices"]["attributes"]["preise"]]
+    hass.states.async_set("sensor.electricity_prices", "192", {"preise": prices})
     await hass.async_block_till_done()
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))  # Entprellung abwarten
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))  # wait for the debounce
     await hass.async_block_till_done()
     assert hass.states.get(PLAN).attributes["slots"][0][1] == 99.0 != before
 
@@ -65,8 +75,8 @@ async def test_new_prices_trigger_replanning(set_up, ha_states):
 async def test_unavailable_without_prices(hass, freezer, set_states, now, tmp_path):
     hass.config.config_dir = str(tmp_path)
     freezer.move_to(now)
-    set_states(**{"sensor.strompreis_15_min": None})
-    assert await async_setup_component(hass, "ems", {"ems": {}})
+    set_states(**{"sensor.electricity_prices": None})
+    assert await async_setup_component(hass, "ems", {"ems": ENTITIES})
     await hass.async_block_till_done()
     plan = hass.states.get(PLAN)
     assert plan is None or plan.state == "unavailable"
@@ -75,9 +85,9 @@ async def test_unavailable_without_prices(hass, freezer, set_states, now, tmp_pa
 async def test_custom_entities_in_configuration(hass, freezer, set_states, now):
     freezer.move_to(now)
     set_states()
-    hass.states.async_set("sensor.mein_soc", "80", {})
+    hass.states.async_set("sensor.my_soc", "80", {})
     assert await async_setup_component(
-        hass, "ems", {"ems": {"soc": "sensor.mein_soc", "aufzeichnung": False}}
+        hass, "ems", {"ems": {**ENTITIES, "soc": "sensor.my_soc", "aufzeichnung": False}}
     )
     await hass.async_block_till_done()
     assert hass.states.get(PLAN).attributes["slots"][0][4] >= 75
@@ -94,12 +104,12 @@ async def test_measurements_per_quarter(hass, freezer, set_states, now, tmp_path
         ("sensor.total_dc_power", "0"),
         ("sensor.battery_power", "1000"),
         ("sensor.meter_active_power", "0"),
-        ("sensor.electricity_price", "0.512"),
+        ("sensor.electricity_price_now", "0.512"),
         ("select.ems_mode", "Self-consumption mode (default)"),
         ("select.battery_forced_charge_discharge", "Stop (default)"),
     ]:
         hass.states.async_set(eid, w)
-    assert await async_setup_component(hass, "ems", {"ems": {"aufzeichnung": False}})
+    assert await async_setup_component(hass, "ems", {"ems": {**ENTITIES, "aufzeichnung": False}})
     await hass.async_block_till_done()
 
     freezer.tick(timedelta(minutes=5))  # 22:35: battery held, energy from the grid
@@ -107,7 +117,7 @@ async def test_measurements_per_quarter(hass, freezer, set_states, now, tmp_path
     hass.states.async_set("sensor.meter_active_power", "1000")
     hass.states.async_set("number.battery_max_discharge_power", "10.0")
     await hass.async_block_till_done()
-    freezer.tick(timedelta(minutes=2, seconds=30))  # 22:37:30 Mitte
+    freezer.tick(timedelta(minutes=2, seconds=30))  # 22:37:30 middle
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     freezer.tick(timedelta(minutes=7, seconds=30))  # 22:45:00 Grenze

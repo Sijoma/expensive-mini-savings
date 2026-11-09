@@ -11,6 +11,9 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_APPROVAL,
+    CONF_APPROVE,
+    CONF_APPROVED_UNTIL,
     CONF_BATTERY_POWER,
     CONF_CAPACITY,
     CONF_DISCHARGE_MAX,
@@ -21,16 +24,22 @@ from .const import (
     CONF_GRID_POWER,
     CONF_LOAD_POWER,
     CONF_LOAD_PROFILE,
+    CONF_LOG,
     CONF_MEASUREMENT,
+    CONF_MODE,
     CONF_PRICE_NOW,
     CONF_PRICES,
     CONF_PV,
     CONF_PV_POWER,
     CONF_RECORDING,
+    CONF_REJECT,
     CONF_RESERVE,
+    CONF_SAVINGS,
+    CONF_SAVINGS_FORECAST,
     CONF_SOC,
     CONF_TARGET,
     CONF_WEAR,
+    CONTROL_KEYS,
     DOMAIN,
     MEASUREMENT_KEYS,
     OPTION_DEFAULTS,
@@ -58,6 +67,14 @@ DOMAINS = {
     CONF_EMS_MODE: ["select", "input_select", "sensor"],
     CONF_FORCED: ["select", "input_select", "sensor"],
     CONF_DISCHARGE_MAX: ["number", "input_number", "sensor"],
+    CONF_MODE: ["input_select", "select"],
+    CONF_APPROVAL: ["binary_sensor"],
+    CONF_APPROVED_UNTIL: ["input_datetime", "sensor"],
+    CONF_APPROVE: ["script"],
+    CONF_REJECT: ["script"],
+    CONF_SAVINGS: ["sensor"],
+    CONF_SAVINGS_FORECAST: ["sensor"],
+    CONF_LOG: ["sensor"],
 }
 
 
@@ -70,7 +87,14 @@ def merged_config(entry: ConfigEntry) -> dict[str, Any]:
 
 def format_settings(conf: dict[str, Any]) -> str:
     """Markdown list of the effective settings (keys as in configuration.yaml)."""
-    keys = [*PLANNER_KEYS, CONF_FEED_IN_CT, CONF_RECORDING, CONF_MEASUREMENT, *MEASUREMENT_KEYS]
+    keys = [
+        *PLANNER_KEYS,
+        CONF_FEED_IN_CT,
+        CONF_RECORDING,
+        CONF_MEASUREMENT,
+        *MEASUREMENT_KEYS,
+        *CONTROL_KEYS,
+    ]
     return "\n".join(
         f"- `{key}`: {conf.get(key) if conf.get(key) not in (None, '') else '–'}" for key in keys
     )
@@ -99,6 +123,10 @@ def _measurement_schema() -> vol.Schema:
     return vol.Schema(fields)
 
 
+def _control_schema() -> vol.Schema:
+    return vol.Schema({vol.Optional(key): _entity(key) for key in CONTROL_KEYS})
+
+
 class EmsConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -118,11 +146,17 @@ class EmsConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_measurement(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(title=TITLE, data={**self._data, **user_input})
+            self._data.update(user_input)
+            return await self.async_step_control()
         return self.async_show_form(
             step_id="measurement",
             data_schema=self.add_suggested_values_to_schema(_measurement_schema(), OPTION_DEFAULTS),
         )
+
+    async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title=TITLE, data={**self._data, **user_input})
+        return self.async_show_form(step_id="control", data_schema=_control_schema())
 
     async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
         """configuration.yaml → config entry. Runs on every start and updates the entry."""
@@ -161,10 +195,21 @@ class EmsOptionsFlow(OptionsFlow):
 
     async def async_step_measurement(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(data={**self._data, **user_input})
+            self._data.update(user_input)
+            return await self.async_step_control()
         return self.async_show_form(
             step_id="measurement",
             data_schema=self.add_suggested_values_to_schema(
                 _measurement_schema(), merged_config(self.config_entry)
+            ),
+        )
+
+    async def async_step_control(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data={**self._data, **user_input})
+        return self.async_show_form(
+            step_id="control",
+            data_schema=self.add_suggested_values_to_schema(
+                _control_schema(), merged_config(self.config_entry)
             ),
         )

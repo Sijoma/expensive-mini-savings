@@ -1,0 +1,66 @@
+# Example template sensors that provide the planner inputs in the expected format.
+# Copy into a package (packages/ems_inputs.yaml) and adapt the entity IDs.
+# Then point the integration at them: preise: sensor.electricity_prices, lastprofil: sensor.load_profile
+
+template:
+  # Prices per quarter hour from the Tibber integration, as [[ms since epoch, ct/kWh], ...].
+  # Reloaded every hour; tomorrow's prices usually arrive around 13:00.
+  - triggers:
+      - trigger: time_pattern
+        minutes: 1
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: tibber.get_prices
+        data:
+          start: "{{ today_at('00:00') }}"
+          end: "{{ today_at('00:00') + timedelta(days=2) }}"
+        response_variable: tibber
+    sensor:
+      - name: Electricity prices
+        unique_id: electricity_prices
+        state: "{{ tibber.prices.values() | list | first | default([]) | count }}"
+        attributes:
+          preise: >
+            {% set ns = namespace(p=[]) %}
+            {% for x in tibber.prices.values() | list | first | default([]) %}
+              {% set ns.p = ns.p + [[(as_timestamp(x.start_time) * 1000) | int, (x.price * 100) | round(2)]] %}
+            {% endfor %}
+            {{ ns.p }}
+
+  # Average house consumption per hour of day in W (24 values), learned with 15 % weight per hour
+  # from a total energy meter in kWh. The start values are a rough guess; replace them with your own.
+  - triggers:
+      - trigger: time_pattern
+        minutes: 0
+        seconds: 10
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: Load profile
+        unique_id: load_profile
+        unit_of_measurement: W
+        state: >
+          {% set p = this.attributes.profil if this.attributes.profil is defined else [500] * 24 %}
+          {{ (p | sum / 24) | round(0) }}
+        attributes:
+          meter: "{{ states('sensor.total_consumed_energy') | float(none) }}"
+          time: "{{ now().timestamp() | round(0) }}"
+          profil: >
+            {% set old = this.attributes.profil if this.attributes.profil is defined else [500] * 24 %}
+            {% set m_old = this.attributes.meter if this.attributes.meter is defined else none %}
+            {% set t_old = this.attributes.time if this.attributes.time is defined else none %}
+            {% set m = states('sensor.total_consumed_energy') | float(none) %}
+            {% set duration = now().timestamp() - t_old if t_old is number else 0 %}
+            {% if trigger.platform == 'time_pattern' and m is number and m_old is number
+                  and 3000 < duration < 4200 %}
+              {% set w = (m - m_old) * 1000 * 3600 / duration %}
+              {% set h = t_old | timestamp_custom('%H') | int %}
+              {% if 0 <= w < 15000 %}
+                {{ old[:h] + [(old[h] * 0.85 + w * 0.15) | round(0)] + old[h + 1:] }}
+              {% else %}
+                {{ old }}
+              {% endif %}
+            {% else %}
+              {{ old }}
+            {% endif %}

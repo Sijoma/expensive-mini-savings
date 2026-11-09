@@ -24,7 +24,7 @@ async def test_dialog_creates_entry_with_defaults(hass, freezer, set_states, now
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            "preise": "sensor.strompreis_15_min",
+            "preise": "sensor.electricity_prices",
             "soc": "sensor.battery_level",
             "einspeisung_ct": 8.0,
             "aufzeichnung": False,
@@ -32,12 +32,17 @@ async def test_dialog_creates_entry_with_defaults(hass, freezer, set_states, now
     )
     assert result["step_id"] == "measurement"
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"messung": False})
+    assert result["step_id"] == "control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"modus": "input_select.ems_modus"}
+    )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     entry = hass.config_entries.async_entries("ems")[0]
     assert entry.data["einspeisung_ct"] == 8.0
     assert hass.states.get(PLAN) is not None
     assert entry.runtime_data.conf["einspeisung_ct"] == 8.0
+    assert entry.data["modus"] == "input_select.ems_modus"
 
 
 async def test_only_one_entry(hass):
@@ -58,7 +63,8 @@ async def test_yaml_is_imported_and_wins(hass, freezer, set_states, now, tmp_pat
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "yaml"
     settings = result["description_placeholders"]["settings"]
-    assert "`einspeisung_ct`: 9" in settings and "`preise`: sensor.strompreis_15_min" in settings
+    assert "`einspeisung_ct`: 9" in settings and "`soc`: sensor.battery_level" in settings
+    assert "`preise`: –" in settings
 
 
 async def test_yaml_change_updates_the_entry(hass, freezer, set_states, now, tmp_path):
@@ -85,13 +91,15 @@ async def test_options_change_reloads(hass, freezer, set_states, now, tmp_path):
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            "preise": "sensor.strompreis_15_min",
+            "preise": "sensor.electricity_prices",
             "soc": "sensor.battery_level",
             "einspeisung_ct": 12.0,
             "aufzeichnung": False,
         },
     )
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"messung": False})
+    assert result["step_id"] == "control"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert entry.runtime_data.conf["einspeisung_ct"] == 12.0

@@ -5,8 +5,8 @@
       aufzeichnung: true     # write inputs hourly to /config/ems/aufzeichnung/
       messung: true          # write measurements per quarter hour to /config/ems/messung/
 
-Input entities can be overridden (keys see const.DEFAULTS). YAML is imported into the config entry on
-every start and takes precedence over options set in the dialog.
+Input entities: keys see const.ENTITY_KEYS, defaults const.DEFAULTS.
+YAML is imported into the config entry on every start and takes precedence over options set in the dialog.
 """
 
 from __future__ import annotations
@@ -28,8 +28,10 @@ from .const import (
     CONF_WEAR,
     DEFAULTS,
     DOMAIN,
+    ENTITY_KEYS,
 )
 from .coordinator import EmsCoordinator
+from .panel import async_register_panel, async_unregister_panel
 from .recorder import MeasurementRecorder
 
 PLATFORMS = [Platform.SENSOR]
@@ -38,7 +40,10 @@ CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
-                **{vol.Optional(k, default=v): cv.entity_id for k, v in DEFAULTS.items()},
+                **{
+                    vol.Optional(k, default=DEFAULTS[k]) if k in DEFAULTS else vol.Optional(k): cv.entity_id
+                    for k in ENTITY_KEYS
+                },
                 vol.Optional(CONF_FEED_IN_CT, default=7.0): vol.Coerce(float),
                 vol.Optional(CONF_RECORDING, default=True): cv.boolean,
                 vol.Optional(CONF_MEASUREMENT, default=True): cv.boolean,
@@ -92,11 +97,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, replan))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_register_panel(hass)
     entry.async_on_unload(entry.add_update_listener(_reload_on_change))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    async_unregister_panel(hass)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 

@@ -1,9 +1,9 @@
 """Translation between Home Assistant states and the core. No HA import, so it is testable.
 
 Inputs:
-- prices: attribute `preise` = [[ms, ct], …] (e.g. sensor.strompreis_15_min)
+- prices: attribute `preise` = [[ms, ct], …]
 - PV: attribute `forecast` = [{datetime, watts, p10}, …] per 15 min (Helios, DC)
-- consumption: attribute `profil` = 24 values in W (sensor.ems_lastprofil) × factor
+- consumption: attribute `profil` = 24 values in W × factor
 
 The output attributes (German keys such as `aktionen`, `grund`) are the interface to the author's
 YAML package and dashboard.
@@ -94,7 +94,7 @@ def battery_from(capacity: Any, reserve: Any, wear: Any, grid_charge_kw: Any) ->
 
 
 def running_action(target: str | None, since: datetime | None, now: datetime) -> tuple[Action | None, int]:
-    """What the EMS currently wants at the battery (sensor.ems_akku_soll) and for how many quarter hours."""
+    """What the EMS currently wants at the battery (target entity) and for how many quarter hours."""
     names = {v: k for k, v in NAMES.items()}
     action = names.get(target or "")
     if action in (None, Action.NORMAL):

@@ -61,15 +61,15 @@ def main() -> None:
         }
 
     ha_states = {
-        "sensor.strompreis_15_min": z("192", **{"preise": prices}),
-        "sensor.dach_ost_west_power_now": z("0.0", forecast=forecast, unit_of_measurement="W"),
-        "sensor.ems_lastprofil": z(str(round(sum(profile) / 24)), **{"profil": profile}),
+        "sensor.electricity_prices": z("192", **{"preise": prices}),
+        "sensor.pv_forecast": z("0.0", forecast=forecast, unit_of_measurement="W"),
+        "sensor.load_profile": z(str(round(sum(profile) / 24)), **{"profil": profile}),
         "sensor.battery_level": z("20.0", unit_of_measurement="%"),
         "sensor.battery_capacity_high_precision": z("10.13", unit_of_measurement="kWh"),
         "number.battery_reserved_soc_for_backup": z("0.0"),
-        "input_number.ems_akku_verschleiss": z("10.0"),
-        "input_number.ems_netzladeleistung": z("5.0"),
-        "sensor.ems_akku_soll": z("Eigenverbrauch"),
+        "input_number.battery_wear": z("10.0"),
+        "input_number.grid_charge_power": z("5.0"),
+        "sensor.battery_target": z("Eigenverbrauch"),
         "number.battery_max_discharge_power": z("5900.0", max=5900),
     }
     target_path = Path(__file__).with_name("ha_eingaben.json")

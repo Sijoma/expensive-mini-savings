@@ -32,6 +32,20 @@
           "erzwungen": "Erzwungenes Laden/Entladen",
           "entladen_max": "Max. Entladeleistung"
         }
+      },
+      "control": {
+        "title": "App: Steuerung (optional)",
+        "description": "Entitäten der Automation, die den Akku schaltet. Die EMS-App zeigt Modus, Freigaben, Ersparnis und Protokoll nur, wenn sie gesetzt sind.",
+        "data": {
+          "modus": "Modus (input_select: Nur planen / Mit Freigabe / Automatisch)",
+          "freigabe": "Freigabe offen (binary_sensor, Attribut aktionen)",
+          "freigabe_bis": "Freigegeben bis (input_datetime)",
+          "freigeben": "Skript: freigeben",
+          "ablehnen": "Skript: ablehnen",
+          "ersparnis": "Gemessene Ersparnis (Sensor in EUR, Attribut aktionen)",
+          "ersparnis_prognose": "Prognostizierte Ersparnis (Sensor in EUR)",
+          "protokoll": "Protokoll (Sensor, Attribut eintraege)"
+        }
       }
     },
     "abort": {
@@ -71,6 +85,20 @@
           "ems_modus": "EMS-Modus des Wechselrichters",
           "erzwungen": "Erzwungenes Laden/Entladen",
           "entladen_max": "Max. Entladeleistung"
+        }
+      },
+      "control": {
+        "title": "App: Steuerung (optional)",
+        "description": "Entitäten der Automation, die den Akku schaltet. Die EMS-App zeigt Modus, Freigaben, Ersparnis und Protokoll nur, wenn sie gesetzt sind.",
+        "data": {
+          "modus": "Modus (input_select: Nur planen / Mit Freigabe / Automatisch)",
+          "freigabe": "Freigabe offen (binary_sensor, Attribut aktionen)",
+          "freigabe_bis": "Freigegeben bis (input_datetime)",
+          "freigeben": "Skript: freigeben",
+          "ablehnen": "Skript: ablehnen",
+          "ersparnis": "Gemessene Ersparnis (Sensor in EUR, Attribut aktionen)",
+          "ersparnis_prognose": "Prognostizierte Ersparnis (Sensor in EUR)",
+          "protokoll": "Protokoll (Sensor, Attribut eintraege)"
         }
       }
     },
