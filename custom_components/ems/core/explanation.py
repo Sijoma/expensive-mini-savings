@@ -1,0 +1,151 @@
+"""Summarize a plan: action blocks with savings and a plain-text reason.
+
+The texts shown to the user (state names, reasons) are German: they are part of the HA interface
+of the author's setup."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import timedelta
+
+from .heat_pump import plan_boost
+from .model import DT_H, Action, Battery, Slot, Tariff
+from .optimizer import plan_with_value
+from .simulation import STANDBY_PV_KW, Result, simulate, usable_per_kwh
+
+# State names of the plan sensor (HA interface, German)
+NAMES = {
+    Action.NORMAL: "Eigenverbrauch",
+    Action.HOLD: "Entladung gesperrt",
+    Action.GRID_CHARGE: "Laden aus dem Netz",
+}
+
+
+@dataclass(frozen=True)
+class Block:
+    first: int
+    """Index of the first quarter hour."""
+    until: int
+    """Index after the last quarter hour."""
+    action: Action
+    price_ct: float
+    """Mean price in the block."""
+    value_ct: float
+    """Mean value of one kWh in the battery (ct per kWh of content) if it is kept."""
+    now_ct: float
+    """What the same kWh would yield if the battery delivered it now (ct per kWh of content)."""
+    grid_kwh: float
+    """Hold: energy taken from the grid instead of the battery. Grid charge: charged from the grid."""
+    saves_ct: float
+    """Compared with the same plan without this block (recomputed)."""
+    reason: str
+
+
+@dataclass(frozen=True)
+class Plan:
+    slots: list[Slot]
+    actions: list[Action]
+    value_ct: list[float]
+    with_plan: Result
+    without: Result
+    blocks: list[Block]
+    boost: list[bool]
+    """Heat pump: PV boost per quarter hour."""
+
+    @property
+    def saves_ct(self) -> float:
+        return self.without.valuation_ct - self.with_plan.valuation_ct
+
+    @property
+    def boost_now(self) -> bool:
+        return bool(self.boost and self.boost[0])
+
+    @property
+    def now(self) -> Action:
+        return self.actions[0] if self.actions else Action.NORMAL
+
+    @property
+    def reason_now(self) -> str:
+        for b in self.blocks:
+            if b.first == 0:
+                return b.reason
+        return "Akku läuft normal"
+
+
+def value_now(slot: Slot, battery: Battery) -> float:
+    """Value of one kWh of battery content if it is delivered in this quarter hour."""
+    residual = slot.load_kw - slot.pv_kw
+    if slot.pv_kw < STANDBY_PV_KW:
+        usable = usable_per_kwh(max(residual, 0.05), battery)
+    else:
+        usable = battery.efficiency_discharge
+    return slot.price_ct * usable - battery.wear_ct
+
+
+def _blocks(actions: Sequence[Action]) -> list[tuple[int, int, Action]]:
+    out, start = [], 0
+    for i in range(1, len(actions) + 1):
+        if i == len(actions) or actions[i] is not actions[start]:
+            if actions[start] is not Action.NORMAL:
+                out.append((start, i, actions[start]))
+            start = i
+    return out
+
+
+def _used_when(slots, with_plan: Result, without_block: Result, after: int):
+    """When the kept or charged energy is used: quarter hours from `after` on in which the battery
+    delivers more with the block than without it, plus the price weighted by that. None if none."""
+    extra = [
+        (j, with_plan.steps[j].discharged_kwh - without_block.steps[j].discharged_kwh)
+        for j in range(after, len(slots))
+    ]
+    extra = [(j, m) for j, m in extra if m > 0.005]
+    if not extra:
+        return None
+    amount = sum(m for _, m in extra)
+    price = sum(m * slots[j].price_ct for j, m in extra) / amount
+    return slots[extra[0][0]].start, slots[extra[-1][0]].start + timedelta(minutes=15), price
+
+
+def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tariff, **kwargs) -> Plan:
+    """Plans, recomputes and explains. kwargs as for `optimizer.plan_with_value`."""
+    slots = list(slots)
+    actions, value = plan_with_value(slots, e0, battery, tariff, **kwargs)
+    with_plan = simulate(slots, e0, actions, battery, tariff)
+    without = simulate(slots, e0, None, battery, tariff)
+    blocks = []
+    for first, until, action in _blocks(actions):
+        without_block = list(actions)
+        without_block[first:until] = [Action.NORMAL] * (until - first)
+        alternative = simulate(slots, e0, without_block, battery, tariff)
+        saves = alternative.valuation_ct - with_plan.valuation_ct
+        price = sum(s.price_ct for s in slots[first:until]) / (until - first)
+        w = sum(value[first:until]) / (until - first)
+        now = sum(value_now(s, battery) for s in slots[first:until]) / (until - first)
+        steps = with_plan.steps[first:until]
+        used = _used_when(slots, with_plan, alternative, until)
+        purpose = (
+            f"für {used[0]:%H:%M}–{used[1]:%H:%M} (Ø {used[2]:.0f} ct)"
+            if used
+            else f"für später (≈ {(w + battery.wear_ct) / battery.efficiency_discharge:.0f} ct)"
+        )
+        if action is Action.HOLD:
+            grid = sum(s.import_kwh for s in steps)
+            reason = (
+                f"Strom jetzt {price:.0f} ct aus dem Netz, der Akku hebt auf {purpose}. "
+                f"1 kWh im Akku spart später ≈ {w:.0f} ct, jetzt nur ≈ {now:.0f} ct"
+            )
+        else:
+            grid = sum(s.grid_charged_kwh for s in steps)
+            # value of the first charged kWh (before charging): the last one is worth less
+            w = max(value[max(first - 1, 0) : until])
+            reason = f"{grid:.1f} kWh laden zu {price:.0f} ct {purpose}. ".replace(
+                ".", ",", 1
+            ) + f"Nach Verlusten und Verschleiß spart das {saves / 100:.2f} €".replace(".", ",")
+        blocks.append(Block(first, until, action, price, w, now, grid, saves, reason))
+    return Plan(slots, actions, value, with_plan, without, blocks, plan_boost(slots, with_plan.steps))
+
+
+def duration_h(block: Block) -> float:
+    return (block.until - block.first) * DT_H

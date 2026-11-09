@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+
+
+# Private measurement data of a house (kept out of the public repository)
+backtest/data/
+backtest/ha/
+backtest/local.json
+tests/cases/
