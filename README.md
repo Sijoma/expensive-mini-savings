@@ -59,6 +59,17 @@ tests/                        pytest + hypothesis; tests/ha runs in a test Home 
   example/                    made-up example inputs (generate.py)
 ```
 
+## Installation
+
+In Home Assistant: **Settings → Marketplace → Add from link** (HACS: *Custom repositories*, type
+*Integration*) with `https://github.com/Sijoma/expensive-mini-savings`, install *Expensive Mini Savings*,
+add the configuration below and restart. New releases then show up as an update.
+
+Manually: copy `custom_components/ems` to `/config/custom_components/ems`.
+
+Releases: bump `version` in `custom_components/ems/manifest.json` and push a tag `vX.Y.Z`
+(`vX.Y.Z-beta.N` for a pre-release); the release workflow runs the tests and creates the release.
+
 ## Setup
 
 ```yaml
