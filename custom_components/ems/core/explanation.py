@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from .heat_pump import plan_boost
-from .model import DT_H, Action, Battery, Slot, Tariff
+from .model import DT_H, MIN_HOLD_SLOTS, Action, Battery, Slot, Tariff
 from .optimizer import plan_with_value
 from .simulation import STANDBY_PV_KW, Result, simulate, usable_per_kwh
 
@@ -108,10 +108,49 @@ def _used_when(slots, with_plan: Result, without_block: Result, after: int):
     return slots[extra[0][0]].start, slots[extra[-1][0]].start + timedelta(minutes=15), price
 
 
+FULL_EPS_KWH = 1e-6
+
+
+def hold_when_full(
+    slots: Sequence[Slot], e0: float, actions: Sequence[Action], battery: Battery, tariff: Tariff
+) -> list[Action]:
+    """Grid charging with a full battery charges nothing: the battery just waits, full. Show (and run)
+    that part as HOLD, so the plan says what happens. Only runs of at least the minimum hold length
+    are changed, and only if the result costs exactly the same; otherwise the actions stay as they are."""
+    actions = list(actions)
+    steps = simulate(slots, e0, actions, battery, tariff).steps
+    idle = [
+        a is Action.GRID_CHARGE
+        and st.grid_charged_kwh < FULL_EPS_KWH
+        and st.e_before >= battery.e_max - FULL_EPS_KWH
+        for a, st in zip(actions, steps, strict=True)
+    ]
+    changed = list(actions)
+    i = 0
+    while i < len(idle):
+        if not idle[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(idle) and idle[j]:
+            j += 1
+        if j - i >= MIN_HOLD_SLOTS:
+            changed[i:j] = [Action.HOLD] * (j - i)
+        i = j
+    if changed == actions:
+        return actions
+    before = simulate(slots, e0, actions, battery, tariff)
+    after = simulate(slots, e0, changed, battery, tariff)
+    if abs(before.valuation_ct - after.valuation_ct) > 1e-6:
+        return actions
+    return changed
+
+
 def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tariff, **kwargs) -> Plan:
     """Plans, recomputes and explains. kwargs as for `optimizer.plan_with_value`."""
     slots = list(slots)
     actions, value = plan_with_value(slots, e0, battery, tariff, **kwargs)
+    actions = hold_when_full(slots, e0, actions, battery, tariff)
     with_plan = simulate(slots, e0, actions, battery, tariff)
     without = simulate(slots, e0, None, battery, tariff)
     blocks = []

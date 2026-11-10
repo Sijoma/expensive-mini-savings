@@ -702,14 +702,15 @@ export class EmsPlanView extends LitElement {
       ["Strompreis: günstig", COLORS.cheap],
       ["mittel", COLORS.middle],
       ["teuer", COLORS.expensive],
-      ["Entladung gesperrt", ACTIONS.h.color, "band"],
-      ["Laden aus dem Netz", ACTIONS.l.color, "band"],
+      ["Eigenverbrauch", ACTIONS.n.color],
+      ["Entladung gesperrt", ACTIONS.h.color],
+      ["Laden aus dem Netz", ACTIONS.l.color],
       ["1 kWh im Akku wert", cssVar(this, "--primary-text-color", "#212121"), "dash"],
       ["Akku mit Plan", COLORS.soc, "line"],
       ["Akku ohne Plan", COLORS.socWithout, "dash"],
       ["PV", COLORS.pv],
       ["Verbrauch", COLORS.load, "line"],
-      ["PV-Boost", COLORS.boost, "band"],
+      ["PV-Boost", COLORS.boost],
       ["Jetzt", cssVar(this, "--primary-color", "#03a9f4"), "dash"],
     ];
     return html`<style>
@@ -759,9 +760,9 @@ export class EmsPlanView extends LitElement {
         ? html`<p class="explain" style="margin:0 0 12px">
               <b>So liest du das:</b> Die Balken zeigen den Strompreis, von grün (günstig) bis rot (teuer). Liegt die
               gestrichelte Linie (was 1 kWh im Akku später spart) über dem Preis, lohnt es sich, den Akku aufzuheben.
-              Farbige Bänder zeigen, wann der Plan eingreift.
+              Die Streifen darunter zeigen, was Akku und Wärmepumpe in jeder Viertelstunde tun.
             </p>
-            <ems-chart .option=${this.option(slots)} .height=${624} .label=${chartSummary(slots)}></ems-chart>
+            <ems-chart .option=${this.option(slots)} .height=${690} .label=${chartSummary(slots)}></ems-chart>
             <ul class="legend muted" aria-label="Legende">
               ${legend.map(
                 ([n, c, kind]) =>
@@ -779,7 +780,9 @@ export class EmsPlanView extends LitElement {
     const hp = sensor(this.hass, this.config, "waermepumpe");
     const blocks: PlanBlock[] = plan?.attributes.aktionen ?? [];
     const boost: { von: number; bis: number }[] = plan?.attributes.wp_aktionen ?? [];
-    const total = blocks.reduce((s, b) => s + (b.spart || 0), 0);
+    // the plan's total, not the sum of the blocks: each block is compared with the plan without it, so the
+    // block savings overlap and do not add up
+    const total = Number(plan?.attributes.ersparnis_eur) || 0;
     const feedIn = Number(this.config.einstellungen.einspeisung_ct ?? 7);
     return html`<section class="card" aria-labelledby="blocks-title">
         <style>
@@ -839,7 +842,12 @@ export class EmsPlanView extends LitElement {
                     </li>`,
                 )}
               </ul>
-              <div class="total"><span>Zusammen, nach Verlusten und Verschleiß</span><span>${eur(total)}</span></div>`
+              <div class="total"><span>Ganzer Plan, nach Verlusten und Verschleiß</span><span>${eur(total)}</span></div>
+              ${blocks.length > 1
+                ? html`<p class="muted small" style="margin:6px 0 0">
+                    Die Beträge der einzelnen Aktionen hängen zusammen und ergeben addiert mehr als der ganze Plan.
+                  </p>`
+                : nothing}`
           : html`<p class="muted">Keine Eingriffe nötig. Der Akku läuft normal.</p>`}
       </section>
       <section class="card" aria-labelledby="hp-title">

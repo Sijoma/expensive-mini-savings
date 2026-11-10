@@ -8,6 +8,7 @@ import {
   priceColor,
   priceLevel,
   savingsOption,
+  stripColor,
   tick,
 } from "../src/options";
 import { summary } from "../src/views/history-view";
@@ -54,18 +55,18 @@ describe("planOption", () => {
     expect(planOption([], T0)).toEqual({});
   });
 
-  it("colors price bars by level and shows planned actions as labeled bands", () => {
+  it("colors price bars by level and shows the actions as strips", () => {
     const slots = [slot(0), slot(1, "h"), slot(2, "h"), slot(3, "l", "pv"), slot(4, "n", "pv")];
     const o = planOption(slots, T0) as any;
     const price = o.series.find((s: any) => s.name === "Preis");
     const colors = price.data.map((d: any) => d.itemStyle.color);
     expect(colors[0]).toBe("rgb(46,157,74)"); // cheapest: green
     expect(colors[4]).toBe("rgb(217,68,47)"); // most expensive: red
-    const bands = price.markArea.data.map((d: any) => d[0].label.formatter);
-    expect(bands).toEqual(["Entladung gesperrt", "Laden aus dem Netz"]);
-    const pv = o.series.find((s: any) => s.name === "PV");
-    expect(pv.markArea.data).toHaveLength(1);
-    expect(o.xAxis).toHaveLength(3);
+    const strip = o.series.find((s: any) => s.type === "custom");
+    expect(strip.data.filter((d: any) => d[1] === 1).map((d: any) => d[2])).toEqual(["n", "h", "h", "l", "n"]);
+    expect(strip.data.filter((d: any) => d[1] === 0).map((d: any) => d[2])).toEqual(["-", "-", "-", "pv", "pv"]);
+    expect(o.xAxis).toHaveLength(4);
+    expect(stripColor("pv")).toBe(stripColor("pv"));
   });
 
   it("names the price level in thirds of the range", () => {

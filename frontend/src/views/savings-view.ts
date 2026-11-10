@@ -145,7 +145,11 @@ export class EmsSavingsView extends LitElement {
                         ${start ? new Date(start).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) : ""}
                         ${start ? time(start) : ""}–${end ? time(end) : ""}
                       </td>
-                      <td><span class="pill" style=${pillColor(b.was)}>${a.name}</span></td>
+                      <td>
+                        ${b.was === "k"
+                          ? html`<span class="pill">Korrektur</span>`
+                          : html`<span class="pill" style=${pillColor(b.was)}>${a.name}</span>`}
+                      </td>
                       <td class="num">${num(b.kwh, 1)} kWh</td>
                       <td class="num">${eur(b.betrag)}</td>
                     </tr>`;
@@ -167,10 +171,13 @@ export class EmsSavingsView extends LitElement {
         <h2><ha-icon icon="mdi:scale-balance"></ha-icon>So wird gerechnet</h2>
         <ul class="small">
           <li>
-            <b>Netzladen:</b> aus dem Netz geladene kWh × Vorteil je kWh nach Verlusten und Verschleiß.
+            Jede ausgeführte Aktion bekommt die Ersparnis, die der Plan für sie ausgerechnet hat: Plan mit gegen Plan
+            ohne diese Aktion, nach Verlusten und Verschleiß.
           </li>
-          <li><b>Sperren:</b> während der Sperre aus dem Netz bezogene kWh × (späterer Preis − Preis jetzt).</li>
-          <li>Die Mengen sind gemessen, der spätere Preis stammt aus dem Plan.</li>
+          <li>
+            Anteilig nach der gemessenen Menge (geladene kWh bzw. Netzbezug während der Sperre), höchstens der
+            geplante Betrag. Lief eine Aktion kürzer, zählt entsprechend weniger.
+          </li>
           <li><b>Prognose:</b> was der Plan jeden Tag für die nächsten 24 h erwartet hat.</li>
         </ul>
       </div>
