@@ -17,6 +17,7 @@ import { cause, logbookRows } from "../src/logbook";
 import { plainState, plainText } from "../src/texts";
 import { day, eur, num, when } from "../src/format";
 import { decisions } from "../src/views/log-view";
+import { daysSince, promiseCheck } from "../src/views/savings-view";
 import { batteryLasts, blockSentence, chartSummary, lowPoint } from "../src/views/plan-view";
 import type { HistoryRow, SlotRow } from "../src/types";
 
@@ -319,5 +320,31 @@ describe("plan texts", () => {
     expect(text).toContain("0,5 Stunden Entladung gesperrt");
     expect(text).toContain("0,3 Stunden Laden aus dem Netz");
     expect(text).toContain("Preis zwischen 30 ct und 33 ct");
+  });
+});
+
+describe("promise check", () => {
+  const H = 3_600_000;
+  const at = (ms: number) => new Date(ms).toISOString();
+  const t0 = Date.parse("2026-11-11T14:05:00+01:00");
+  const booked = (startMs: number, betrag: number, was = "l") => ({
+    start: at(startMs), ende: at(startMs + H), was, kwh: 1, betrag,
+  });
+  it("compares only finished 24 h windows, without corrections", () => {
+    const promises = [{ zeit: at(t0), wert: 1.5 }, { zeit: at(t0 + 24 * H), wert: 2.0 }];
+    const items = [booked(t0 + 12 * H, 1.2), booked(t0 + 36 * H, 1.9), booked(t0 + 2 * H, 1.11, "k")];
+    expect(promiseCheck(promises, items, t0 + 30 * H)).toMatchObject({ promised: 1.5, measured: 1.2, windows: 1 });
+    const two = promiseCheck(promises, items, t0 + 50 * H)!;
+    expect(two.promised).toBeCloseTo(3.5);
+    expect(two.measured).toBeCloseTo(3.1);
+    expect(two.windows).toBe(2);
+  });
+  it("is empty before the first window is over", () => {
+    expect(promiseCheck([{ zeit: at(t0), wert: 1 }], [], t0 + 2 * H)).toBeNull();
+    expect(promiseCheck([], [], t0)).toBeNull();
+  });
+  it("counts the days since the start", () => {
+    expect(daysSince("2026-11-09", Date.parse("2026-11-11T10:00:00"))).toBe(3);
+    expect(daysSince(undefined, Date.now())).toBe(1);
   });
 });

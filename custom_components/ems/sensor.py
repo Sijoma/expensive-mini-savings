@@ -3,6 +3,7 @@ forecast, log and load profile (executor)."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -170,9 +171,16 @@ class ForecastSensor(ExecutorEntity, SensorEntity):
         return round(float(self.executor.state["forecast"]["value"]), 3)
 
     @property
+    def last_reset(self) -> datetime | None:
+        """Start of the current sum: a reset starts a new cycle instead of a jump in the statistics."""
+        since = dt_util.parse_date(self.executor.state["forecast"].get("since") or "")
+        return dt_util.start_of_local_day(since) if since else None
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         s = self.executor.state["forecast"]
-        return {"letzter_tag": s["last_day"], "seit": s["since"]}
+        days = [{"zeit": d["at"], "wert": d["value"]} for d in s.get("days", [])]
+        return {"letzter_tag": s["last_day"], "seit": s["since"], "tage": days}
 
 
 class LogSensor(ExecutorEntity, SensorEntity):

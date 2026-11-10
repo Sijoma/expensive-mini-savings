@@ -118,6 +118,10 @@
     "freigabe_zuruecknehmen": {
       "name": "Freigabe zurücknehmen",
       "description": "Beendet eine Freigabe sofort; danach läuft der Akku normal."
+    },
+    "prognose_zuruecksetzen": {
+      "name": "Prognose zurücksetzen",
+      "description": "Setzt die Summe der Prognose auf 0; der Vergleich mit der gemessenen Ersparnis beginnt neu."
     }
   }
 }

@@ -325,7 +325,15 @@ async def test_passive_while_the_yaml_executor_is_loaded(hass, ems, inverter, mo
     await ems.set_mode(c.AUTOMATIC)
     await hass.async_block_till_done()
     assert inverter["calls"] == []
-    assert "YAML-Steuerung" in ems.state["log"][0]["text"]
+    assert ems.state["log"][0]["art"] == "Hinweis" and "YAML-Steuerung" in ems.state["log"][0]["text"]
+
+
+async def test_leftover_registry_entry_of_the_yaml_executor_is_ignored(hass, ems, inverter, monkeypatch):
+    hass.states.async_set("automation.ems_akku_steuern", "unavailable", {"restored": True})
+    with_plan(ems, monkeypatch, [block_now("h")])
+    await ems.set_mode(c.AUTOMATIC)
+    await hass.async_block_till_done()
+    assert ems.state["set_by_ems"] == c.HOLD
 
 
 async def test_no_switching_before_the_first_plan(hass, ems, inverter, monkeypatch):
@@ -339,3 +347,18 @@ async def test_no_switching_before_the_first_plan(hass, ems, inverter, monkeypat
     await ems.apply("start")
     await hass.async_block_till_done()
     assert ems.target == c.HOLD and inverter["calls"] == []
+
+
+async def test_forecast_is_recorded_daily_and_can_be_reset(hass, ems, monkeypatch):
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(attribute={"ersparnis_24h": 1.5}))
+    ems._forecast(dt_util.now())
+    ems._forecast(dt_util.now())
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.ems_prognose_ersparnis")
+    assert float(state.state) == 3.0 and len(state.attributes["tage"]) == 2
+    await hass.services.async_call("ems", "prognose_zuruecksetzen", blocking=True)
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.ems_prognose_ersparnis")
+    assert float(state.state) == 0 and state.attributes["tage"] == []
+    assert state.attributes["last_reset"] is not None
+    assert ems.state["log"][0]["text"].startswith("Prognose zurückgesetzt (vorher 3,00 €)")

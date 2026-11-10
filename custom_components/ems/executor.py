@@ -67,6 +67,7 @@ REQUEST_AFTER_S = 300
 REQUEST_HOURS = (7, 22.5)
 """... and only between 07:00 and 22:30 (at 07:00 open requests come again)."""
 LOG_MAX = 50
+FORECAST_DAYS = 100
 SAVINGS_MAX = 100
 WEAR_DEFAULT = 10.0
 GRID_KW_DEFAULT = 5.0
@@ -104,7 +105,7 @@ def empty_state() -> dict[str, Any]:
         "running_block": None,
         "log": [],
         "savings": {"value": 0.0, "items": [], "since": today},
-        "forecast": {"value": 0.0, "last_day": None, "since": today},
+        "forecast": {"value": 0.0, "last_day": None, "since": today, "days": []},
         "load_profile": {"values": list(c.START_PROFILE), "meter": None, "at": None},
         "wear_ct": WEAR_DEFAULT,
         "grid_charge_kw": GRID_KW_DEFAULT,
@@ -381,11 +382,14 @@ class Executor:
 
     def yaml_executor_running(self) -> bool:
         """The former YAML executor is still loaded: then this one stays passive (never two controllers)."""
-        running = self.hass.states.get(LEGACY_AUTOMATION) is not None
+        state = self.hass.states.get(LEGACY_AUTOMATION)
+        # an entry left in the registry after the YAML was removed is only a placeholder ("restored")
+        running = state is not None and not state.attributes.get("restored")
         if running and not self._warned_yaml:
             self._warned_yaml = True
             _LOGGER.warning("EMS: %s still exists, the integration does not switch", LEGACY_AUTOMATION)
-            self.log("Fehler", "Alte YAML-Steuerung ist noch aktiv: die Integration schaltet nicht.")
+            # not "Fehler": that kind marks a failed own switch and lets the EMS correct it
+            self.log("Hinweis", "Alte YAML-Steuerung ist noch aktiv: die Integration schaltet nicht.")
             self._changed()
         return running
 
@@ -653,6 +657,16 @@ class Executor:
         forecast = self.state["forecast"]
         forecast["value"] = round(float(forecast["value"]) + value, 3)
         forecast["last_day"] = value
+        entry = {"at": dt_util.now().isoformat(timespec="minutes"), "value": value}
+        forecast["days"] = [*forecast.get("days", []), entry][-FORECAST_DAYS:]
+        self._changed()
+
+    async def reset_forecast(self) -> None:
+        """Start the forecast sum anew (e.g. after a calculation error); measured savings stay."""
+        old = float(self.state["forecast"]["value"])
+        today = dt_util.now().date().isoformat()
+        self.state["forecast"] = {"value": 0.0, "last_day": None, "since": today, "days": []}
+        self.log("Hinweis", f"Prognose zurückgesetzt (vorher {_eur(old)}), Vergleich beginnt neu")
         self._changed()
 
     def _remember_meter(self) -> None:

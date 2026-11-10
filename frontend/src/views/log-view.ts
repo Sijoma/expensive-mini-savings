@@ -16,6 +16,7 @@ const ICONS: Record<string, string> = {
   Modus: "mdi:tune-variant",
   Manuell: "mdi:hand-back-right-outline",
   Fehler: "mdi:alert-outline",
+  Hinweis: "mdi:information-outline",
   Abgerechnet: "mdi:cash",
 };
 
@@ -29,6 +30,7 @@ const ACTOR: Record<string, string> = {
   Abgelehnt: "Du",
   Modus: "Du",
   Manuell: "von außen",
+  Hinweis: "EMS",
 };
 const ACTOR_FILTERS = ["Alle", "Du", "EMS", "von außen"] as const;
 

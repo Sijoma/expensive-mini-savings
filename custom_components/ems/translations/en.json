@@ -118,6 +118,10 @@
     "freigabe_zuruecknehmen": {
       "name": "Withdraw approval",
       "description": "Ends an approval now; the battery runs normally afterwards."
+    },
+    "prognose_zuruecksetzen": {
+      "name": "Reset forecast",
+      "description": "Sets the forecast sum to 0; the comparison with the measured savings starts anew."
     }
   }
 }

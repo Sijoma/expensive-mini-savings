@@ -167,7 +167,7 @@ async def _reload_on_change(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-SERVICES = ("freigeben", "ablehnen", "freigabe_zuruecknehmen")
+SERVICES = ("freigeben", "ablehnen", "freigabe_zuruecknehmen", "prognose_zuruecksetzen")
 
 
 @callback
@@ -195,3 +195,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, "freigeben", approve)
     hass.services.async_register(DOMAIN, "ablehnen", reject)
     hass.services.async_register(DOMAIN, "freigabe_zuruecknehmen", withdraw)
+
+    async def reset_forecast(_call: ServiceCall) -> None:
+        if ex := executor():
+            await ex.reset_forecast()
+
+    hass.services.async_register(DOMAIN, "prognose_zuruecksetzen", reset_forecast)
