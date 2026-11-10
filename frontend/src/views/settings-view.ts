@@ -51,14 +51,20 @@ export class EmsSettingsView extends LitElement {
     }
   }
 
-  private number(key: string, label: string, unit: string, help: string) {
+  private number(key: string, confKey: string, label: string, unit: string, help: string) {
     const e = configured(this.hass, this.config, key);
     if (!e) {
+      // no entity (yet): still show a value fixed in configuration.yaml, the planner uses it
+      const fixedValue = Number(this.config.einstellungen[confKey]);
+      const has = this.config.einstellungen[confKey] != null && Number.isFinite(fixedValue);
       return html`<div class="setting">
         <div>
           <b>${label}</b>
-          <div class="muted small">Keine Entität gesetzt. Der Planer rechnet mit seinem Standardwert.</div>
+          <div class="muted small">
+            ${has ? `${help} · fest in configuration.yaml` : "Nicht gesetzt. Der Planer rechnet mit seinem Standardwert."}
+          </div>
         </div>
+        ${has ? html`<span class="val">${num(fixedValue, fixedValue % 1 ? 1 : 0)} ${unit}</span>` : nothing}
       </div>`;
     }
     const waiting = e.entity_id in this.pending;
@@ -140,7 +146,8 @@ export class EmsSettingsView extends LitElement {
           opacity: 0.4;
           cursor: default;
         }
-        .stepper .val {
+        .stepper .val,
+        .setting > .val {
           min-width: 72px;
           text-align: center;
           font-variant-numeric: tabular-nums;
@@ -158,9 +165,10 @@ export class EmsSettingsView extends LitElement {
       <div class="grid">
         <section class="card" aria-labelledby="set-title">
           <h2 id="set-title"><ha-icon icon="mdi:tune"></ha-icon>Einstellungen</h2>
-          ${this.number("verschleiss", "Akku-Verschleiß", "ct", "Was es kostet, 1 kWh aus dem Akku zu nehmen")}
+          ${this.number("verschleiss", "verschleiss_ct", "Akku-Verschleiß", "ct", "Was es kostet, 1 kWh aus dem Akku zu nehmen")}
           ${this.number(
             "netzladeleistung",
+            "netzladeleistung_kw",
             "Netz-Ladeleistung",
             "kW",
             `Wie schnell der Akku aus dem Netz lädt${p ? ` (höchstens ${num(p.netzladen_max_kw, 0)} kW)` : ""}`,

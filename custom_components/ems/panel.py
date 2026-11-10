@@ -5,6 +5,7 @@ with the integration, so it needs no separate frontend install."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import date
@@ -62,8 +63,17 @@ def _version() -> str:
         return "0"
 
 
+def _module_hash() -> str:
+    """Short content hash of the built app: the browser caches the module for a month, so the URL must
+    change whenever the file does, not only when the version number does."""
+    try:
+        return hashlib.sha256((FRONTEND_DIR / MODULE).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "0"
+
+
 async def async_register_panel(hass: HomeAssistant) -> None:
-    hass.data[DATA_VERSION] = version = await hass.async_add_executor_job(_version)
+    hass.data[DATA_VERSION] = await hass.async_add_executor_job(_version)
     if not hass.data.get(DATA_WS):
         websocket_api.async_register_command(hass, ws_config)
         websocket_api.async_register_command(hass, ws_history)
@@ -86,7 +96,8 @@ async def async_register_panel(hass: HomeAssistant) -> None:
         webcomponent_name="ems-panel",
         sidebar_title="EMS",
         sidebar_icon="mdi:battery-clock-outline",
-        module_url=f"{STATIC_URL}/{MODULE}?v={version}",  # new version → browser loads the new file
+        # new file → new URL → browser loads it instead of its cached copy
+        module_url=f"{STATIC_URL}/{MODULE}?v={await hass.async_add_executor_job(_module_hash)}",
         require_admin=False,
     )
 
