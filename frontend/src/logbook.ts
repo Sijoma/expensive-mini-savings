@@ -37,9 +37,6 @@ export const LOGBOOK_KEYS = [
   "erzwungen",
   "entladen_max",
   "freigabe",
-  "freigabe_bis",
-  "freigeben",
-  "ablehnen",
 ];
 
 const toMs = (when: number | string): number => (typeof when === "number" ? when * 1000 : Date.parse(when));
@@ -62,12 +59,14 @@ const OUTAGE = new Set(["unavailable", "unknown"]);
 /** Inverter keys: a change there without an EMS action shortly before came from outside (VPP, app, by hand). */
 export const INVERTER_KEYS = ["ems_modus", "erzwungen", "entladen_max"];
 const EXTERNAL_WINDOW_MS = 120_000;
+const CONFIRM_WINDOW_MS = 90_000;
 
 export function logbookRows(
   entries: LogbookEntry[],
   userId?: string,
   outages = false,
   inverter: Set<string> = new Set(),
+  emsEntity?: string,
 ): LogbookRow[] {
   const chronological = entries
     .filter((e) => e.entity_id)
@@ -91,11 +90,16 @@ export function logbookRows(
     const what = message ? plainText(message) : e.state != null ? `→ ${plainState(e.state)}` : "";
     rows.push({ ms, entity, name: e.name ?? entity, what, ...cause(e, userId) });
   }
-  const actions = rows.filter((r) => r.kind === "automation" || r.kind === "user").map((r) => r.ms);
+  // EMS actions: an automation or a user, or the executor's own logbook entry on its target sensor
+  // ("EMS Akku …", written once the inverter confirmed, up to a minute after the change)
+  const byEms = (r: LogbookRow) => r.entity === emsEntity && !r.what.startsWith("→");
+  const actions = rows
+    .filter((r) => r.kind === "automation" || r.kind === "user" || byEms(r))
+    .map((r) => r.ms);
   for (const r of rows) {
     if (!inverter.has(r.entity) || r.kind === "automation" || r.kind === "user") continue;
     if (r.what === `→ ${plainState("unavailable")}` || r.what === `→ ${plainState("unknown")}`) continue;
-    const ems = actions.some((t) => t <= r.ms + 5_000 && t >= r.ms - EXTERNAL_WINDOW_MS);
+    const ems = actions.some((t) => t <= r.ms + CONFIRM_WINDOW_MS && t >= r.ms - EXTERNAL_WINDOW_MS);
     if (ems) r.by = "Wechselrichter, nach EMS-Befehl";
     else Object.assign(r, { kind: "external", by: "von außen, nicht vom EMS" });
   }

@@ -28,15 +28,29 @@ CONF_EMS_MODE = "ems_modus"
 CONF_FORCED = "erzwungen"
 CONF_DISCHARGE_MAX = "entladen_max"
 
-# Executor shown in the app (optional; today the author's YAML package does the switching)
-CONF_MODE = "modus"
-CONF_APPROVAL = "freigabe"
-CONF_APPROVED_UNTIL = "freigabe_bis"
-CONF_APPROVE = "freigeben"
-CONF_REJECT = "ablehnen"
-CONF_SAVINGS = "ersparnis"
-CONF_SAVINGS_FORECAST = "ersparnis_prognose"
-CONF_LOG = "protokoll"
+# Executor: switches the battery by the plan (mode, approvals, booking, log live in the integration)
+CONF_FORCED_POWER = "ladeleistung_erzwungen"
+CONF_CHARGED = "akku_ladung"
+CONF_CHARGED_PV = "akku_ladung_pv"
+CONF_IMPORTED = "netzbezug"
+CONF_CONSUMED = "verbrauch"
+CONF_NOTIFY = "benachrichtigung"
+"""Notify service for approval requests and alerts, e.g. notify.my_phone. Without it no push."""
+CONF_WEAR_CT = "verschleiss_ct"
+CONF_GRID_KW = "netzladeleistung_kw"
+"""Fixed values in configuration.yaml: then wear / grid charge power cannot be changed in the app."""
+
+LEGACY_CONTROL_KEYS = (
+    "modus",
+    "freigabe",
+    "freigabe_bis",
+    "freigeben",
+    "ablehnen",
+    "ersparnis",
+    "ersparnis_prognose",
+    "protokoll",
+)
+"""Entities of the former YAML executor (up to 0.5). Still accepted in configuration.yaml, ignored."""
 
 DEFAULTS = {
     CONF_SOC: "sensor.battery_level",
@@ -49,9 +63,15 @@ DEFAULTS = {
     CONF_EMS_MODE: "select.ems_mode",
     CONF_FORCED: "select.battery_forced_charge_discharge",
     CONF_DISCHARGE_MAX: "number.battery_max_discharge_power",
+    CONF_FORCED_POWER: "number.battery_forced_charge_discharge_power",
+    CONF_CHARGED: "sensor.total_battery_charge",
+    CONF_CHARGED_PV: "sensor.total_battery_charge_from_pv",
+    CONF_IMPORTED: "sensor.total_imported_energy",
+    CONF_CONSUMED: "sensor.total_consumed_energy",
 }
-"""Entity IDs created by the mkaiser Sungrow Modbus integration. Everything else (prices, PV forecast,
-load profile, wear, grid charge power, target) depends on the setup and has no default."""
+"""Entity IDs created by the mkaiser Sungrow Modbus integration. Prices and PV forecast depend on the setup
+and have no default. Load profile, wear, grid charge power and target are the integration's own entities
+unless set."""
 
 # Order of the fields in the setup dialog
 PLANNER_KEYS = (
@@ -75,20 +95,13 @@ MEASUREMENT_KEYS = (
     CONF_FORCED,
     CONF_DISCHARGE_MAX,
 )
-CONTROL_KEYS = (
-    CONF_MODE,
-    CONF_APPROVAL,
-    CONF_APPROVED_UNTIL,
-    CONF_APPROVE,
-    CONF_REJECT,
-    CONF_SAVINGS,
-    CONF_SAVINGS_FORECAST,
-    CONF_LOG,
-)
-"""Entities of the executor (mode, approvals, accounting, log). The app shows a section only if its
-entity is set. Formats see README (App)."""
-ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *CONTROL_KEYS)
+EXECUTOR_KEYS = (CONF_FORCED_POWER, CONF_CHARGED, CONF_CHARGED_PV, CONF_IMPORTED, CONF_CONSUMED)
+"""Inverter setting and meters the executor uses (it switches via ems_modus, erzwungen, entladen_max)."""
+ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *EXECUTOR_KEYS)
 REQUIRED_KEYS = (CONF_PRICES, CONF_SOC)
 """Without these the planner cannot run; all other inputs have fallbacks."""
 
 OPTION_DEFAULTS = {**DEFAULTS, CONF_FEED_IN_CT: 7.0, CONF_RECORDING: True, CONF_MEASUREMENT: True}
+
+SIGNAL_EXECUTOR = f"{DOMAIN}_executor_update"
+"""Dispatcher signal: the executor's state changed (entities update)."""

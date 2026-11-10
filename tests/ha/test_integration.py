@@ -11,7 +11,7 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-PLAN = "sensor.ems_plan_akku_neu"
+PLAN = "sensor.ems_plan_akku"
 ENTITIES = {
     "preise": "sensor.electricity_prices",
     "pv_prognose": "sensor.pv_forecast",
@@ -46,7 +46,7 @@ async def test_sensors_are_created(set_up):
     assert attr["berechnet"].startswith("2026-11-08T22:31")
     assert isinstance(attr["grund"], str)
     assert float(hass.states.get(VALUE).state) >= 0
-    wp = hass.states.get("sensor.ems_plan_warmepumpe_neu")
+    wp = hass.states.get("sensor.ems_plan_warmepumpe")
     assert wp.state in ("Normal", "PV-Boost")
     assert isinstance(wp.attributes["aktionen"], list)
 

@@ -46,6 +46,9 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
         super().__init__(hass, _LOGGER, config_entry=entry, name="EMS", update_interval=None)
         self.conf = conf
         self._last_recording: str | None = None
+        self.executor: Any = None
+        """The integration's executor; supplies wear, grid charge power, load profile and the running
+        action when no external entities are configured for them."""
 
     def _state(self, key: str) -> Any:
         entity_id = self.conf.get(key)
@@ -61,28 +64,29 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
 
     async def _async_update_data(self) -> Result:
         now = dt_util.now()
-        slots = build_slots(
-            self._attribute(CONF_PRICES, "preise"),
-            self._attribute(CONF_PV, "forecast"),
-            self._attribute(CONF_LOAD_PROFILE, "profil"),
-            now,
-        )
+        ex = self.executor
+        profile = self._attribute(CONF_LOAD_PROFILE, "profil") if self.conf.get(CONF_LOAD_PROFILE) else None
+        if profile is None and ex is not None:
+            profile = ex.profile
+        prices, pv = self._attribute(CONF_PRICES, "preise"), self._attribute(CONF_PV, "forecast")
+        slots = build_slots(prices, pv, profile, now)
         if not slots:
             raise UpdateFailed("no prices from now on")
-        battery = battery_from(
-            self._value(CONF_CAPACITY),
-            self._value(CONF_RESERVE),
-            self._value(CONF_WEAR),
-            self._value(CONF_GRID_CHARGE_POWER),
-        )
+        external = lambda key: self.conf.get(key) or ex is None  # noqa: E731
+        wear = self._value(CONF_WEAR) if external(CONF_WEAR) else ex.wear
+        grid_kw = self._value(CONF_GRID_CHARGE_POWER) if external(CONF_GRID_CHARGE_POWER) else ex.grid_kw
+        battery = battery_from(self._value(CONF_CAPACITY), self._value(CONF_RESERVE), wear, grid_kw)
         soc = number(self._value(CONF_SOC), float("nan"))
         if soc != soc:  # nan: SoC unknown
             raise UpdateFailed("battery state of charge unknown")
         e0 = soc / 100 * battery.capacity_kwh
-        target = self._state(CONF_TARGET)
-        running, since = running_action(
-            target.state if target else None, target.last_changed if target else None, now
-        )
+        if self.conf.get(CONF_TARGET) or ex is None:
+            target = self._state(CONF_TARGET)
+            running, since = running_action(
+                target.state if target else None, target.last_changed if target else None, now
+            )
+        else:
+            running, since = running_action(ex.target, ex.target_since, now)
         tariff = Tariff(feed_in_ct=float(self.conf.get(CONF_FEED_IN_CT, 7.0)))
 
         t0 = time.perf_counter()

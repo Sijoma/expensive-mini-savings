@@ -61,6 +61,18 @@ export function priceColor(price: number, min: number, max: number): string {
   return `rgb(${mix.join(",")})`;
 }
 
+/** Lower end of the price axis: below the cheapest price, on a 5 ct step (not 0, so the
+ * differences between the hours are visible; below 0 when prices are negative). */
+export function priceAxisMin(prices: number[]): number {
+  const valid = prices.filter((p) => Number.isFinite(p));
+  if (!valid.length) return 0;
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  // 30 % of the range below the cheapest price (at least 5 ct), on a 5 ct step: the cheapest hours
+  // keep a visible bar height
+  return Math.floor((min - Math.max((max - min) * 0.3, 5)) / 5) * 5;
+}
+
 /** "günstig", "mittel" or "teuer": thirds of the range between cheapest and most expensive price. */
 export function priceLevel(price: number, min: number, max: number): "günstig" | "mittel" | "teuer" {
   const t = max > min ? (price - min) / (max - min) : 0.5;
@@ -85,6 +97,7 @@ export function planOption(
     slots.map((s) => s[6] === "pv"),
   );
   const prices = slots.map((s) => s[1]);
+  const axisMin = priceAxisMin(prices);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   // same left edge for all parts, so the quarter hours line up; room for the strip labels
@@ -133,7 +146,7 @@ export function planOption(
     grid: grids,
     xAxis: [x(0, false), x(1, false), x(2, false), x(3, true)],
     yAxis: [
-      y(0, "Strompreis in ct/kWh", { splitNumber: 4 }),
+      y(0, "Strompreis in ct/kWh", { splitNumber: 4, min: axisMin, scale: true }),
       {
         type: "category",
         gridIndex: 1,
@@ -179,17 +192,6 @@ export function planOption(
           itemStyle: { color: priceColor(s[1], min, max), borderRadius: [2, 2, 0, 0] },
         })),
         markLine: nowLine,
-      },
-      {
-        name: "1 kWh im Akku",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        step: "start",
-        symbol: "none",
-        lineStyle: { width: 2.5, color: ink, type: [6, 4] },
-        itemStyle: { color: ink },
-        data: slots.map((s) => [s[0], s[8]]),
       },
       stripSeries(
         1,
@@ -334,7 +336,15 @@ export function historyOption(rows: HistoryRow[]): ChartOption {
         axisTick: { show: false },
         axisLine: { show: false },
       },
-      { type: "value", gridIndex: 2, name: "ct/kWh", ...axisStyle(), splitNumber: 2 },
+      {
+        type: "value",
+        gridIndex: 2,
+        name: "ct/kWh",
+        ...axisStyle(),
+        splitNumber: 2,
+        min: priceAxisMin(rows.map((r) => r.preis_ct ?? Number.NaN)),
+        scale: true,
+      },
     ],
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     tooltip: {

@@ -18,15 +18,21 @@ async def setup(hass, set_states, tmp_path, conf=None):
 
 
 async def test_config_lists_sensors_and_entities(hass, hass_ws_client, set_states, tmp_path):
-    await setup(hass, set_states, tmp_path, {"modus": "input_select.ems_modus", "aufzeichnung": False})
+    await setup(hass, set_states, tmp_path, {"aufzeichnung": False})
     client = await hass_ws_client(hass)
     await client.send_json_auto_id({"type": "ems/config"})
     msg = await client.receive_json()
     assert msg["success"]
     r = msg["result"]
-    assert r["sensoren"]["plan"] == "sensor.ems_plan_akku_neu"
+    assert r["sensoren"]["plan"] == "sensor.ems_plan_akku"
     assert r["sensoren"]["wert"] == "sensor.ems_wert_akku"
-    assert r["entitaeten"]["modus"] == "input_select.ems_modus"
+    # the executor's own entities
+    assert r["entitaeten"]["modus"] == "select.ems_modus_akku"
+    assert r["entitaeten"]["freigabe"] == "binary_sensor.ems_akku_freigabe_offen"
+    assert r["entitaeten"]["ersparnis"] == "sensor.ems_ersparnis"
+    assert r["dienste"] is True
+    # a configured input takes precedence over the own entity
+    assert r["entitaeten"]["verschleiss"] == "input_number.battery_wear"
     assert r["entitaeten"]["soc"] == "sensor.battery_level"
     assert "ablehnen" not in r["entitaeten"]
     assert r["einstellungen"]["aufzeichnung"] is False

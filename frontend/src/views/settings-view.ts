@@ -66,13 +66,16 @@ export class EmsSettingsView extends LitElement {
     const step = Number(e.attributes.step ?? 1);
     const min = Number(e.attributes.min ?? 0);
     const max = Number(e.attributes.max ?? 100);
-    const editable = ["input_number", "number"].includes(e.entity_id.split(".")[0]);
+    const fixed = e.attributes.fest_in_yaml === true;
+    const editable = !fixed && ["input_number", "number"].includes(e.entity_id.split(".")[0]);
     const digits = step < 1 ? 1 : 0;
     const shown = available(e) || waiting ? `${num(v, digits)} ${unit}` : "–";
     return html`<div class="setting">
       <div>
         <b id="set-${key}">${label}</b>
-        <div class="muted small">${help}${waiting ? " · wird übernommen …" : ""}</div>
+        <div class="muted small">
+          ${help}${waiting ? " · wird übernommen …" : ""}${fixed ? " · fest in configuration.yaml" : ""}
+        </div>
       </div>
       <div class="stepper" role="group" aria-labelledby="set-${key}">
         ${editable
@@ -164,8 +167,9 @@ export class EmsSettingsView extends LitElement {
           )}
           ${this.error ? html`<div class="warn error">${this.error}</div>` : nothing}
           <p class="muted small">
-            Der Plan rechnet nach jeder Änderung neu. Ist für die Entität in YAML ein <code>initial:</code> gesetzt,
-            gilt die Änderung nur bis zum nächsten Neustart von Home Assistant.
+            Der Plan rechnet nach jeder Änderung neu. Stehen <code>verschleiss_ct</code> oder
+            <code>netzladeleistung_kw</code> unter <code>ems:</code> in configuration.yaml, gelten diese Werte fest und
+            lassen sich hier nicht ändern.
           </p>
         </section>
         <section class="card" aria-labelledby="profile-title">

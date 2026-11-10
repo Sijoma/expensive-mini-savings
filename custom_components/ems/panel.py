@@ -40,6 +40,19 @@ SENSORS = {
     "waermepumpe": "ems_neu_plan_waermepumpe",
 }
 """App name → unique_id of our sensors (entity IDs can be renamed by the user)."""
+OWN = {
+    "modus": ("select", "ems_modus_akku"),
+    "freigabe": ("binary_sensor", "ems_akku_freigabe_offen"),
+    "soll": ("sensor", "ems_akku_soll"),
+    "ersparnis": ("sensor", "ems_ersparnis"),
+    "ersparnis_prognose": ("sensor", "ems_prognose_ersparnis"),
+    "protokoll": ("sensor", "ems_protokoll"),
+    "lastprofil": ("sensor", "ems_lastprofil"),
+    "verschleiss": ("number", "ems_akku_verschleiss"),
+    "netzladeleistung": ("number", "ems_netzladeleistung"),
+}
+"""App key → the integration's own executor entities. An input set in the configuration takes precedence
+(lastprofil, verschleiss, netzladeleistung, soll)."""
 
 
 def _version() -> str:
@@ -92,10 +105,18 @@ def app_config(hass: HomeAssistant) -> dict[str, Any]:
     sensors = {
         name: registry.async_get_entity_id("sensor", DOMAIN, unique_id) for name, unique_id in SENSORS.items()
     }
+    entities = {
+        key: entity_id
+        for key, (domain, unique_id) in OWN.items()
+        if (entity_id := registry.async_get_entity_id(domain, DOMAIN, unique_id))
+    }
+    entities.update({key: conf[key] for key in ENTITY_KEYS if conf.get(key)})
     return {
         "version": hass.data.get(DATA_VERSION, "0"),
         "sensoren": sensors,
-        "entitaeten": {key: conf.get(key) for key in ENTITY_KEYS if conf.get(key)},
+        "entitaeten": entities,
+        # approvals run as services ems.freigeben / ems.ablehnen / ems.freigabe_zuruecknehmen
+        "dienste": True,
         "einstellungen": {k: v for k, v in conf.items() if k not in ENTITY_KEYS},
         "yaml": bool(entry and entry.source == SOURCE_IMPORT),
         "eintrag": entry.entry_id if entry else None,

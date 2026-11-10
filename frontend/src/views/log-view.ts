@@ -95,7 +95,7 @@ export class EmsLogView extends LitElement {
 
   private rows(): LogbookRow[] {
     const inverter = new Set(INVERTER_KEYS.map((k) => this.config.entitaeten[k]).filter(Boolean));
-    return logbookRows(this.raw, this.hass.user?.id, this.outages, inverter);
+    return logbookRows(this.raw, this.hass.user?.id, this.outages, inverter, this.config.entitaeten.soll);
   }
 
   render() {

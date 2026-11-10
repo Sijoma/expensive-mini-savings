@@ -6,6 +6,7 @@ import {
   midnights,
   planOption,
   priceColor,
+  priceAxisMin,
   priceLevel,
   savingsOption,
   stripColor,
@@ -14,9 +15,9 @@ import {
 import { summary } from "../src/views/history-view";
 import { cause, logbookRows } from "../src/logbook";
 import { plainState, plainText } from "../src/texts";
-import { day, eur, num } from "../src/format";
+import { day, eur, num, when } from "../src/format";
 import { decisions } from "../src/views/log-view";
-import { blockSentence, chartSummary, lowPoint } from "../src/views/plan-view";
+import { batteryLasts, blockSentence, chartSummary, lowPoint } from "../src/views/plan-view";
 import type { HistoryRow, SlotRow } from "../src/types";
 
 const T0 = Date.parse("2026-11-09T22:00:00+01:00");
@@ -40,6 +41,47 @@ describe("midnights", () => {
     const m = midnights(T0, T0 + 20 * 3600_000); // 22:00 → 18:00 next day
     expect(m).toHaveLength(1);
     expect(new Date(m[0]).getHours()).toBe(0);
+  });
+});
+
+describe("priceAxisMin", () => {
+  it("starts below the cheapest price, on a 5 ct step", () => {
+    expect(priceAxisMin([34.6, 41, 82.8])).toBe(20); // 34.6 − 14.5 = 20.1
+    expect(priceAxisMin([41.1, 92.0])).toBe(25); // 41.1 − 15.3 = 25.8
+    expect(priceAxisMin([45, 46])).toBe(40); // at least 5 ct room
+    expect(priceAxisMin([-3, 20])).toBe(-10);
+    expect(priceAxisMin([])).toBe(0);
+  });
+});
+
+describe("plan price axis", () => {
+  it("follows the prices and keeps the value line inside", () => {
+    const slots = [slot(0), slot(1), slot(2)];
+    slots.forEach((s) => (s[8] = 5)); // value far below the prices (30–32 ct)
+    const o = planOption(slots, T0) as any;
+    expect(o.yAxis[0].min).toBe(25);
+    expect(o.series.find((s: any) => s.name === "1 kWh im Akku")).toBeUndefined();
+    expect(o.tooltip.formatter([{ axisValue: T0 + 60_000 }])).toContain("5 ct wert"); // still in the details
+  });
+});
+
+describe("batteryLasts", () => {
+  const withSoc = (socs: number[]) =>
+    socs.map((soc, i) => {
+      const s = slot(i);
+      s[4] = soc;
+      return s;
+    });
+  it("says until when the battery lasts", () => {
+    expect(batteryLasts(withSoc([40, 20, 5, 0, 0]), 45)).toEqual({ label: "Akku reicht bis", value: when(T0 + 3 * QUARTER_MS) });
+    expect(batteryLasts(withSoc([40, 30, 50]), 45)).toEqual({ label: "Akku reicht", value: "bis Planende" });
+  });
+  it("says when an empty battery charges again", () => {
+    expect(batteryLasts(withSoc([0, 0, 12, 24]), 0)).toEqual({
+      label: "Akku ist leer, lädt wieder ab",
+      value: when(T0 + 2 * QUARTER_MS),
+    });
+    expect(batteryLasts(withSoc([0, 0]), 0).value).toBe("im ganzen Plan");
   });
 });
 
@@ -189,6 +231,21 @@ describe("logbook filter", () => {
 });
 
 describe("external inverter changes", () => {
+  it("counts the integration's own switch (its logbook entry after the confirmation) as EMS", () => {
+    const at = (sec: number) => `2026-11-09T10:00:${String(sec).padStart(2, "0")}Z`;
+    const rows = logbookRows(
+      [
+        { entity_id: "select.ems_mode", name: "EMS mode", when: at(0), state: "Forced mode" },
+        { entity_id: "sensor.ems_akku_soll", name: "EMS Akku", when: at(40), message: "Eigenverbrauch → Laden aus dem Netz" },
+      ],
+      undefined,
+      false,
+      new Set(["select.ems_mode"]),
+      "sensor.ems_akku_soll",
+    );
+    expect(rows.find((r) => r.entity === "select.ems_mode")!.kind).not.toBe("external");
+  });
+
   const inv = new Set(["select.ems_mode"]);
   const at = (sec: number) => `2026-11-09T10:00:${String(sec).padStart(2, "0")}Z`;
   it("marks an inverter change without EMS action as external", () => {

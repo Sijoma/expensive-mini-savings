@@ -105,5 +105,19 @@
     "abort": {
       "yaml": "Dieser Eintrag kommt aus configuration.yaml (`ems:`), YAML hat Vorrang. Aktuelle Einstellungen:\n\n{settings}\n\nÄndern: in configuration.yaml und neu starten. Um sie hier zu verwalten, `ems:` aus configuration.yaml entfernen."
     }
+  },
+  "services": {
+    "freigeben": {
+      "name": "Akku-Plan freigeben",
+      "description": "Gibt alle ausführbaren Akku-Aktionen der nächsten 24 Stunden frei (bis zum nächsten 14:00)."
+    },
+    "ablehnen": {
+      "name": "Akku-Plan ablehnen",
+      "description": "Lehnt alle angebotenen Akku-Aktionen ab, bis zu ihrem Ende."
+    },
+    "freigabe_zuruecknehmen": {
+      "name": "Freigabe zurücknehmen",
+      "description": "Beendet eine Freigabe sofort; danach läuft der Akku normal."
+    }
   }
 }

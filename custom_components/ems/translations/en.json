@@ -105,5 +105,19 @@
     "abort": {
       "yaml": "This entry comes from configuration.yaml (`ems:`), which takes precedence. Current settings:\n\n{settings}\n\nTo change them, edit configuration.yaml and restart. To manage them here instead, remove `ems:` from configuration.yaml."
     }
+  },
+  "services": {
+    "freigeben": {
+      "name": "Approve battery plan",
+      "description": "Approves all runnable battery actions of the next 24 hours (until the next 14:00)."
+    },
+    "ablehnen": {
+      "name": "Reject battery plan",
+      "description": "Rejects all offered battery actions until they end."
+    },
+    "freigabe_zuruecknehmen": {
+      "name": "Withdraw approval",
+      "description": "Ends an approval now; the battery runs normally afterwards."
+    }
   }
 }

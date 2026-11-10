@@ -7,7 +7,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-PLAN = "sensor.ems_plan_akku_neu"
+PLAN = "sensor.ems_plan_akku"
 
 
 async def _prepare(hass, freezer, set_states, now, tmp_path):
@@ -34,7 +34,7 @@ async def test_dialog_creates_entry_with_defaults(hass, freezer, set_states, now
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"messung": False})
     assert result["step_id"] == "control"
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"modus": "input_select.ems_modus"}
+        result["flow_id"], {"benachrichtigung": "notify.phone_test"}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
@@ -42,7 +42,7 @@ async def test_dialog_creates_entry_with_defaults(hass, freezer, set_states, now
     assert entry.data["einspeisung_ct"] == 8.0
     assert hass.states.get(PLAN) is not None
     assert entry.runtime_data.conf["einspeisung_ct"] == 8.0
-    assert entry.data["modus"] == "input_select.ems_modus"
+    assert entry.data["benachrichtigung"] == "notify.phone_test"
 
 
 async def test_only_one_entry(hass):

@@ -13,8 +13,10 @@ The name is honest: on a 10 kWh battery with a dynamic tariff the savings are re
 > Tibber 15-minute prices and the Helios PV forecast. Other setups work if they provide the [inputs](#inputs)
 > in the same format.
 
-- **It only plans.** It creates sensors with the plan. Switching the inverter is up to you (an automation
-  that follows `sensor.ems_plan_akku_neu`); nothing is ever written to your devices.
+- **Plans, and switches only if you let it.** Three modes: *Nur planen* (default: nothing is written to your
+  devices), *Mit Freigabe* (each planned intervention needs your approval, by push or in the app) and
+  *Automatisch*. Switching uses the Sungrow Modbus entities; settings that did not come from the EMS (vendor
+  app, VPP, by hand) are never overridden.
 - **German names.** Configuration keys (`preise`, `soc`, …), attribute names and the states and reasons
   shown in Home Assistant are German, because the author's automations and dashboard depend on them.
   The setup dialog is translated (English, German).
@@ -39,8 +41,9 @@ The name is honest: on a 10 kWh battery with a dynamic tariff the savings are re
    (slope of the value function). The battery holds when that value is higher than what the kWh yields now.
 5. **Heat pump** (`core/heat_pump.py`). PV boost only with surplus that the battery plan would export.
 
-The integration only **plans**. Switching the inverter, approvals and accounting live in the author's
-YAML package, which reads the plan sensor.
+6. **Executor** (`control.py` rules, `executor.py`). Runs the plan at the inverter depending on the mode, asks
+   for approval by push, books savings, keeps a log and learns the load profile. The heat pump is planned
+   only; switching it is left to a separate SG Ready automation.
 
 ## Layout
 
@@ -57,7 +60,9 @@ custom_components/ems/        the Home Assistant integration (copy this folder t
   integration.py              setup from configuration.yaml, triggers
   coordinator.py              reads inputs, plans in a worker thread, hourly recording of inputs
   recorder.py, measurement.py measurements per quarter hour → /config/ems/messung/
-  sensor.py                   plan, value of one kWh, heat pump plan
+  sensor.py                   plan, value of one kWh, heat pump plan; executor sensors
+  control.py, executor.py     executor: rules (no HA) and the part that switches, asks, books, logs
+  select.py, binary_sensor.py, number.py, button.py   mode, approval pending, settings, approve/reject
   panel.py, history.py        the app: sidebar panel, websocket commands, plan against reality
 backtest/                     not part of the integration
   export.py                   fetch raw history from HA and aggregate per quarter hour
@@ -93,8 +98,10 @@ Or in `configuration.yaml` (imported into the same entry on every start; YAML th
 ems:
   preise: sensor.electricity_prices       # required
   pv_prognose: sensor.solar_forecast_power_now
-  lastprofil: sensor.load_profile
   einspeisung_ct: 7                       # feed-in compensation in ct/kWh
+  benachrichtigung: notify.my_phone   # push for approvals and alerts (optional)
+  verschleiss_ct: 10                      # optional: fixed wear, not changeable in the app
+  netzladeleistung_kw: 5                  # optional: fixed grid charge power
   # the Sungrow entities below have defaults and can be overridden the same way
 ```
 
@@ -130,9 +137,24 @@ plan once per hour in `/config/ems/aufzeichnung/`.
 
 | Entity | State | Main attributes |
 |---|---|---|
-| `sensor.ems_plan_akku_neu` | what the battery should do now (`Eigenverbrauch`, `Entladung gesperrt`, `Laden aus dem Netz`) | `grund` (reason), `aktionen` (blocks with time, kWh, price, savings, reason), `slots` (table per quarter hour, see `adapter.plan_attributes`), `ersparnis_eur`, `berechnet`, `rechenzeit_ms` |
+| `sensor.ems_plan_akku` | what the plan wants now (`Eigenverbrauch`, `Entladung gesperrt`, `Laden aus dem Netz`) | `grund` (reason), `aktionen` (blocks with time, kWh, price, savings, reason), `slots` (table per quarter hour, see `adapter.plan_attributes`), `ersparnis_eur`, `ersparnis_24h`, `berechnet`, `rechenzeit_ms` |
 | `sensor.ems_wert_akku` | value of one kWh in the battery now, ct | – |
-| `sensor.ems_plan_warmepumpe_neu` | `Normal` or `PV-Boost` | `aktionen` (boost periods) |
+| `sensor.ems_plan_warmepumpe` | `Normal` or `PV-Boost` | `aktionen` (boost periods) |
+| `select.ems_modus_akku` | `Nur planen` / `Mit Freigabe` / `Automatisch` | – |
+| `sensor.ems_akku_soll` | what runs at the battery now (after mode and approval) | `ist` (inverter), `gesetzt` (last set by the EMS), `plan_aktuell` |
+| `binary_sensor.ems_akku_freigabe_offen` | something waits for approval | `aktionen`, `freigegeben_bis`, `freigegeben`, `freigegeben_kwh` |
+| `button.ems_akku_freigeben`, `button.ems_akku_ablehnen` | approve / reject the next 24 h | services `ems.freigeben`, `ems.ablehnen`, `ems.freigabe_zuruecknehmen` |
+| `sensor.ems_ersparnis` | measured savings, EUR (`total`) | `aktionen` (booked blocks), `seit` |
+| `sensor.ems_prognose_ersparnis` | the plan's expected savings, added daily at 14:05 | `letzter_tag` |
+| `sensor.ems_protokoll` | last decision | `eintraege` (newest first) |
+| `sensor.ems_lastprofil` | mean consumption, W | `profil` (24 values, learned hourly from the energy meter) |
+| `number.ems_akku_verschleiss`, `number.ems_netzladeleistung` | wear (ct/kWh), grid charge power (kW) | `fest_in_yaml` |
+
+**How it switches** (Sungrow Modbus entities): hold = self-consumption with the discharge limit at 10 W (PV
+keeps charging); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
+with the discharge limit back at its maximum. Every command is checked after 60 s. Blocks are run from 30 min
+(hold) / 15 min (grid charge) and 5 ct savings, grid charging stops at 98 %, a plan older than 30 min means
+normal operation. A finished block books the plan's savings for it, scaled by the measured quantity.
 
 ### App
 
@@ -141,23 +163,11 @@ install or configure; it updates with the integration.
 
 | Tab | Shows |
 |---|---|
-| Plan | what the battery does now and why, value of 1 kWh in the battery, one chart with price (colored by action), SoC with and without plan, PV, load and heat pump boost; planned actions with savings and reasons |
+| Plan | what the battery does now and why, how long it lasts, approvals, mode; one chart with price (colored by level), the planned actions of battery and heat pump as strips, SoC with and without plan, PV and load; planned actions with savings and reasons |
 | Ersparnis | measured savings today / week / month, per day against the forecast, booked actions |
 | Verlauf | plan against reality per day: planned and executed action, measured SoC, grid import and its cost |
-| Protokoll | decisions of the executor; logbook of mode, target, inverter and approvals with who caused each change (inverter changes without an EMS action shortly before are marked as external, e.g. VPP); state of every configured entity |
+| Protokoll | decisions with who acted; logbook of mode, target, inverter and approvals (inverter changes without an EMS action shortly before are marked as external, e.g. VPP); state of every entity |
 | Einstellungen | wear and grid charge power, load profile, how the planner calculates, the configuration |
-
-Mode, approvals, savings and log come from the automation that switches the battery (the author's YAML
-package). Set their entities in the setup dialog (step *App*) or in YAML; sections without an entity are
-hidden:
-
-| Key | Entity | Format |
-|---|---|---|
-| `modus` | `input_select` | options `Nur planen`, `Mit Freigabe`, `Automatisch` |
-| `freigabe` | `binary_sensor` | `on` while an approval is pending; attribute `aktionen` = plan blocks (`von`, `bis`, `was`, `kwh`, `ct`, `spart`, `grund`) |
-| `freigabe_bis`, `freigeben`, `ablehnen` | `input_datetime`, `script`, `script` | approved until; the buttons run the scripts |
-| `ersparnis`, `ersparnis_prognose` | `sensor` (EUR, `state_class: total`) | attribute `aktionen` = `[{start, ende, was, kwh, betrag}]` |
-| `protokoll` | `sensor` | attribute `eintraege` = `[{zeit, art, text, modus, soc, preis}]`, newest first |
 
 The app is TypeScript with [Lit](https://lit.dev) and [ECharts](https://echarts.apache.org) in `frontend/`,
 built into `custom_components/ems/frontend/ems-panel.js` (`npm ci && npm run build`; CI checks that the

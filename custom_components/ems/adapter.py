@@ -117,7 +117,7 @@ def savings_24h(plan: Plan, battery: Battery, quarters: int = 96) -> float:
 
 
 def plan_attributes(plan: Plan, battery: Battery, computed: datetime, runtime_ms: float) -> dict[str, Any]:
-    """Attributes of the plan sensor (sensor.ems_plan_akku_neu).
+    """Attributes of the plan sensor (sensor.ems_plan_akku).
 
     `slots`: [0 ms, 1 ct, 2 PV kW, 3 load kW, 4 SoC %, 5 battery code, 6 heat pump code ("n"/"pv"),
     7 grid charge kWh, 8 value of one kWh in the battery (ct), 9 SoC without control %, 10–15 flows

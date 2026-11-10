@@ -30,6 +30,22 @@ export function blockSentence(b: PlanBlock): string {
     : "Der Akku hält seine Ladung und entlädt nicht";
 }
 
+/** How long the battery lasts by the plan: until a time, or empty now and charging again from a time,
+ * or beyond the end of the plan. Empty = at or below 1 % of the usable range. */
+export function batteryLasts(slots: SlotRow[], level: number | null): { label: string; value: string } {
+  if (!slots.length) return { label: "Akku reicht", value: "–" };
+  const EMPTY = 1;
+  if (level != null && level <= EMPTY) {
+    const refill = slots.find((s) => s[4] > EMPTY);
+    return refill
+      ? { label: "Akku ist leer, lädt wieder ab", value: when(refill[0]) }
+      : { label: "Akku ist leer", value: "im ganzen Plan" };
+  }
+  const out = slots.find((s) => s[4] <= EMPTY);
+  if (!out) return { label: "Akku reicht", value: "bis Planende" };
+  return { label: "Akku reicht bis", value: when(out[0]) };
+}
+
 /** Lowest planned state of charge and when it is reached. */
 export function lowPoint(slots: SlotRow[]): { soc: number; at: number } | null {
   if (!slots.length) return null;
@@ -89,8 +105,8 @@ export class EmsPlanView extends LitElement {
   }
 
   private approvedUntil(): number | null {
-    const until = configured(this.hass, this.config, "freigabe_bis");
-    const ms = until ? toMs(until.state.replace(" ", "T")) : null;
+    const approval = configured(this.hass, this.config, "freigabe");
+    const ms = toMs(approval?.attributes.freigegeben_bis);
     return ms && ms > Date.now() ? ms : null;
   }
 
@@ -142,8 +158,6 @@ export class EmsPlanView extends LitElement {
   // ---- 1. Is something waiting for me? ----
 
   private renderApproval(pending: PlanBlock[]) {
-    const approve = this.config.entitaeten.freigeben;
-    const reject = this.config.entitaeten.ablehnen;
     const color = ACTIONS[pending[0].was]?.color ?? ACTIONS.h.color;
     return html`<section class="card approval" style="--tone:${color}" aria-labelledby="approval-title">
       <style>
@@ -220,33 +234,28 @@ export class EmsPlanView extends LitElement {
         )}
       </ul>
       <div class="buttons">
-        ${approve
-          ? html`<button
-              class="action"
-              ?disabled=${this.busy}
-              @click=${() =>
-                this.call(
-                  "script",
-                  "turn_on",
-                  { entity_id: approve },
-                  pending.length === 1
-                    ? "Freigegeben. Das EMS schaltet zur geplanten Zeit."
-                    : `${pending.length} Aktionen freigegeben. Das EMS schaltet zur geplanten Zeit.`,
-                )}
-            >
-              <ha-icon icon="mdi:check"></ha-icon>${pending.length === 1 ? "Freigeben" : "Alle freigeben"}
-            </button>`
-          : nothing}
-        ${reject
-          ? html`<button
-              class="action secondary"
-              ?disabled=${this.busy}
-              @click=${() =>
-                this.call("script", "turn_on", { entity_id: reject }, "Abgelehnt. Der Akku läuft normal weiter.")}
-            >
-              <ha-icon icon="mdi:close"></ha-icon>Ablehnen
-            </button>`
-          : nothing}
+        <button
+          class="action"
+          ?disabled=${this.busy}
+          @click=${() =>
+            this.call(
+              "ems",
+              "freigeben",
+              {},
+              pending.length === 1
+                ? "Freigegeben. Das EMS schaltet zur geplanten Zeit."
+                : `${pending.length} Aktionen freigegeben. Das EMS schaltet zur geplanten Zeit.`,
+            )}
+        >
+          <ha-icon icon="mdi:check"></ha-icon>${pending.length === 1 ? "Freigeben" : "Alle freigeben"}
+        </button>
+        <button
+          class="action secondary"
+          ?disabled=${this.busy}
+          @click=${() => this.call("ems", "ablehnen", {}, "Abgelehnt. Der Akku läuft normal weiter.")}
+        >
+          <ha-icon icon="mdi:close"></ha-icon>Ablehnen
+        </button>
       </div>
     </section>`;
   }
@@ -255,7 +264,6 @@ export class EmsPlanView extends LitElement {
 
   private renderNow() {
     const plan = sensor(this.hass, this.config, "plan");
-    const value = sensor(this.hass, this.config, "wert");
     const soc = configured(this.hass, this.config, "soc");
     if (!available(plan)) {
       return html`<section class="card">
@@ -276,6 +284,7 @@ export class EmsPlanView extends LitElement {
     const charge = Number(a.netzladen_kwh) || 0;
     const level = available(soc) ? Math.round(Number(soc.state)) : null;
     const low = lowPoint(slots);
+    const lasts = batteryLasts(slots, level);
     const prices = slots.map((s) => s[1]);
     const price = prices[0];
     const min = Math.min(...prices);
@@ -440,7 +449,7 @@ export class EmsPlanView extends LitElement {
             ${low ? html`<div class="mark" style="left:${low.soc}%"></div>` : nothing}
           </div>
           <div class="note">
-            ${low ? html`Tiefster Stand laut Plan: <b>${low.soc} %</b> ${when(low.at)}` : nothing}
+            ${low && (level ?? 0) > 1 ? html`Tiefster Stand laut Plan: <b>${low.soc} %</b> ${when(low.at)}` : nothing}
           </div>
         </div>
         <div class="gauge">
@@ -462,8 +471,8 @@ export class EmsPlanView extends LitElement {
       </div>
       <dl>
         <div>
-          <dt>1 kWh im Akku ist später wert</dt>
-          <dd>${available(value) ? ct(value.state) : "–"}</dd>
+          <dt>${lasts.label}</dt>
+          <dd>${lasts.value}</dd>
         </div>
         <div>
           <dt>Plan spart bis ${a.bis ? when(toMs(a.bis)!) : "–"}</dt>
@@ -523,7 +532,6 @@ export class EmsPlanView extends LitElement {
     const target = configured(this.hass, this.config, "soll");
     const inverter = configured(this.hass, this.config, "ems_modus");
     const until = this.approvedUntil();
-    const untilEntity = this.config.entitaeten.freigabe_bis;
     const ist: string | undefined = target?.attributes.ist;
     const options: string[] = mode.attributes.options ?? MODES.map((m) => m.name);
     const feedback = this.feedback && Date.now() - this.feedback.at < FEEDBACK_MS ? this.feedback : undefined;
@@ -665,21 +673,19 @@ export class EmsPlanView extends LitElement {
           ? html`<dt>Freigegeben bis</dt>
               <dd>
                 ${when(until)}
-                ${untilEntity?.startsWith("input_datetime.")
-                  ? html`<br /><button
-                        class="link"
-                        ?disabled=${this.busy}
-                        @click=${() =>
-                          this.call(
-                            "input_datetime",
-                            "set_datetime",
-                            { entity_id: untilEntity, timestamp: Math.floor(Date.now() / 1000) },
-                            "Freigabe zurückgenommen. Der Akku läuft normal weiter.",
-                          )}
-                      >
-                        Freigabe zurücknehmen
-                      </button>`
-                  : nothing}
+                <br /><button
+                  class="link"
+                  ?disabled=${this.busy}
+                  @click=${() =>
+                    this.call(
+                      "ems",
+                      "freigabe_zuruecknehmen",
+                      {},
+                      "Freigabe zurückgenommen. Der Akku läuft normal weiter.",
+                    )}
+                >
+                  Freigabe zurücknehmen
+                </button>
               </dd>`
           : nothing}
       </dl>
@@ -705,7 +711,6 @@ export class EmsPlanView extends LitElement {
       ["Eigenverbrauch", ACTIONS.n.color],
       ["Entladung gesperrt", ACTIONS.h.color],
       ["Laden aus dem Netz", ACTIONS.l.color],
-      ["1 kWh im Akku wert", cssVar(this, "--primary-text-color", "#212121"), "dash"],
       ["Akku mit Plan", COLORS.soc, "line"],
       ["Akku ohne Plan", COLORS.socWithout, "dash"],
       ["PV", COLORS.pv],
@@ -758,9 +763,9 @@ export class EmsPlanView extends LitElement {
       <h2><ha-icon icon="mdi:chart-timeline-variant"></ha-icon>Plan</h2>
       ${slots.length
         ? html`<p class="explain" style="margin:0 0 12px">
-              <b>So liest du das:</b> Die Balken zeigen den Strompreis, von grün (günstig) bis rot (teuer). Liegt die
-              gestrichelte Linie (was 1 kWh im Akku später spart) über dem Preis, lohnt es sich, den Akku aufzuheben.
-              Die Streifen darunter zeigen, was Akku und Wärmepumpe in jeder Viertelstunde tun.
+              <b>So liest du das:</b> Die Balken zeigen den Strompreis, von grün (günstig) bis rot (teuer). Die
+              Streifen darunter zeigen, was Akku und Wärmepumpe in jeder Viertelstunde tun, die Kurve darunter den
+              Akkustand mit Plan (und gestrichelt ohne Plan).
             </p>
             <ems-chart .option=${this.option(slots)} .height=${690} .label=${chartSummary(slots)}></ems-chart>
             <ul class="legend muted" aria-label="Legende">
