@@ -112,7 +112,7 @@ export class EmsLogView extends LitElement {
         .chips button {
           font: inherit;
           font-size: 0.875rem;
-          min-height: 36px;
+          min-height: 44px;
           border: 1px solid var(--divider-color);
           background: transparent;
           color: var(--primary-text-color);
@@ -130,7 +130,7 @@ export class EmsLogView extends LitElement {
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          min-height: 36px;
+          min-height: 44px;
         }
         .entries {
           list-style: none;

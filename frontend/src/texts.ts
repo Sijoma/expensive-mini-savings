@@ -27,10 +27,23 @@ const ESCAPED = Object.keys(STATES)
   .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 const IN_TEXT = new RegExp(`(${ESCAPED.join("|")})`, "g");
 
-/** Cleans a sentence written elsewhere: English states, `None`, decimal points before units, -0. */
+/** Older executor log texts (up to 0.6.3) in the fixed terms of PRODUCT.md. */
+const LEGACY: [RegExp, string][] = [
+  [/\bNetzladen seit\b/g, "Laden aus dem Netz seit"],
+  [/\bSperre seit\b/g, "Entladung gesperrt seit"],
+  [/\bEntladung sperren\b/g, "Entladung gesperrt"],
+  [/\bNetzladen (\d)/g, "Laden aus dem Netz, $1"],
+  [/\bfür 1 Aktion\(en\)/g, "für 1 Aktion"],
+  [/\bAktion\(en\)/g, "Aktionen"],
+  [/Anders \((?:unavailable|unknown|None) \/ (?:unavailable|unknown|None) \/ -?\d+ W\)/g, "Nicht erreichbar"],
+  [/^(.+?) → (.+?) nicht bestätigt nach (\d+) s \(jetzt: (.+)\)$/, "Umschalten von $1 auf $2 nicht bestätigt: nach $3 s meldet der Wechselrichter $4"],
+];
+
+/** Cleans a sentence written elsewhere: older log wording, English states, `None`, decimal points before
+ * units, -0. */
 export function plainText(text: string | null | undefined): string {
   if (!text) return "";
-  return text
+  return LEGACY.reduce((t, [pattern, plain]) => t.replace(pattern, plain), text)
     .replace(IN_TEXT, (m) => STATES[m] ?? m)
     .replace(/\bNone\b/g, "–")
     .replace(/(\d)\.(\d+)(\s?(?:ct|kWh|kW|€|%))/g, "$1,$2$3")

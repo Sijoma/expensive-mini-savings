@@ -160,13 +160,18 @@ def next_approval_end(now: datetime) -> datetime:
     return at if now < at else at + timedelta(days=1)
 
 
+def approval_end(items: Sequence[dict[str, Any]], now: datetime) -> int:
+    """How long an approval of these blocks holds (ms): the next 14:00, at least to the end of the last."""
+    return max(max(b["bis"] for b in items), int(next_approval_end(now).timestamp() * 1000))
+
+
 def approve(blocks: Sequence[dict[str, Any]], now: datetime, approval: Approval) -> Approval:
     """Approve everything offered now: until the next 14:00, at least to the end of the last block."""
     now_ms = int(now.timestamp() * 1000)
     items = offered(blocks, now_ms)
     if not items:
         return approval
-    until = max(max(b["bis"] for b in items), int(next_approval_end(now).timestamp() * 1000))
+    until = approval_end(items, now)
     kwh = round(min(sum(b.get("kwh") or 0.0 for b in items if b["was"] == "l"), APPROVED_KWH_MAX), 1)
     return Approval(
         until_ms=until, codes=frozenset(b["was"] for b in items), kwh=kwh, rejected_until_ms=now_ms
@@ -198,6 +203,8 @@ FORCED_CHARGE = "Forced charge"
 (select.ems_mode, select.battery_forced_charge_discharge)."""
 HOLD_DISCHARGE_W = 10
 """Discharge limit for a hold: the minimum of the SBH battery; PV surplus keeps charging."""
+UNREACHABLE = "Nicht erreichbar"
+"""The inverter's mode entities report no value (integration down, Modbus timeout)."""
 HOLD_MAX_W = 100
 """A discharge limit up to this counts as hold."""
 
@@ -211,6 +218,8 @@ def inverter_state(mode: str | None, forced: str | None, discharge_w: float | No
         return HOLD
     if mode == FORCED_MODE and forced == FORCED_CHARGE:
         return CHARGE
+    if mode in (None, "unavailable", "unknown") or forced in (None, "unavailable", "unknown"):
+        return UNREACHABLE
     return f"Anders ({mode} / {forced} / {int(g)} W)"
 
 

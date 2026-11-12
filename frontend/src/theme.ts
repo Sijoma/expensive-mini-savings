@@ -134,6 +134,12 @@ export const cardStyles = css`
   .warn.error::before {
     background: var(--error-color, #db4437);
   }
+  .warn.ok {
+    background: color-mix(in srgb, var(--success-color, #43a047) 14%, transparent);
+  }
+  .warn.ok::before {
+    background: var(--success-color, #43a047);
+  }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -239,7 +245,7 @@ export const cardStyles = css`
   details summary {
     cursor: pointer;
     color: var(--secondary-text-color);
-    min-height: 32px;
+    min-height: 44px;
     display: list-item;
   }
   ::selection {

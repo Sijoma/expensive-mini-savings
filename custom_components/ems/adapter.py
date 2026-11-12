@@ -160,6 +160,7 @@ def plan_attributes(plan: Plan, battery: Battery, computed: datetime, runtime_ms
             "netz_kwh": round(b.grid_kwh, 2) if b.action is Action.HOLD else None,
             "kurz": (b.until - b.first) * DT_H < 0.5,
             "grund": b.reason,
+            "rechnung": b.calculation,
         }
         for b in plan.blocks
     ]

@@ -28,6 +28,7 @@ export class EmsPanel extends LitElement {
   @state() private config?: AppConfig;
   @state() private error?: string;
   @state() private tab: Tab = "plan";
+  @state() private navMore = false;
 
   static styles = [
     cardStyles,
@@ -84,7 +85,8 @@ export class EmsPanel extends LitElement {
         min-width: 18px;
         height: 18px;
         border-radius: 9px;
-        background: var(--error-color, #db4437);
+        /* darkened so the white count keeps 4.5:1 */
+        background: color-mix(in srgb, var(--error-color, #db4437) 82%, black);
         color: #fff;
         font-size: 0.75rem;
         display: inline-grid;
@@ -103,12 +105,17 @@ export class EmsPanel extends LitElement {
         margin: 0 auto;
         box-sizing: border-box;
       }
+      nav.more {
+        /* more tabs to the right: fade the edge as a scroll hint */
+        mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+      }
       @media (max-width: 600px) {
         main {
           padding: 12px 8px;
         }
         nav button {
           padding: 10px 10px;
+          min-height: 44px;
           font-size: 0.9rem;
         }
         nav button ha-icon {
@@ -120,6 +127,10 @@ export class EmsPanel extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.updateComplete.then(() => {
+      const nav = this.renderRoot.querySelector("nav");
+      if (nav) this.resize.observe(nav);
+    });
     const fromHash = location.hash.slice(1) as Tab;
     if (TABS.some((t) => t.id === fromHash)) this.tab = fromHash;
   }
@@ -155,6 +166,23 @@ export class EmsPanel extends LitElement {
   private select(tab: Tab): void {
     this.tab = tab;
     history.replaceState(null, "", `#${tab}`);
+    this.updateComplete.then(() =>
+      this.renderRoot.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" }),
+    );
+  }
+
+  private onNavScroll = (): void => {
+    const nav = this.renderRoot.querySelector("nav");
+    if (!nav) return;
+    const more = nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 4;
+    if (more !== this.navMore) this.navMore = more;
+  };
+
+  private resize = new ResizeObserver(() => this.onNavScroll());
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.resize.disconnect();
   }
 
   render() {
@@ -163,7 +191,7 @@ export class EmsPanel extends LitElement {
           <ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>
           <span class="title">Energie-Management</span>
         </div>
-        <nav role="tablist" aria-label="Bereiche">
+        <nav role="tablist" aria-label="Bereiche" class=${this.navMore ? "more" : ""} @scroll=${this.onNavScroll}>
           ${TABS.map(
             (t) =>
               html`<button

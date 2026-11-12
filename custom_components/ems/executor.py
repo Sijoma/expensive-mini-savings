@@ -438,7 +438,11 @@ class Executor:
             await self._switched(current, goal, active)
         else:
             now_state = self.inverter()
-            self.log("Fehler", f"{current} → {goal} nicht bestätigt nach {CONFIRM_S} s (jetzt: {now_state})")
+            self.log(
+                "Fehler",
+                f"Umschalten von {current} auf {goal} nicht bestätigt: nach {CONFIRM_S} s meldet der "
+                f"Wechselrichter {now_state}",
+            )
             self._changed()
             await self.notify(
                 "⚠️ EMS Akku",
@@ -574,7 +578,7 @@ class Executor:
         }  # fmt: skip
         savings["items"] = [entry, *savings["items"]][:SAVINGS_MAX]
         self._archive(archive.SAVINGS, entry)
-        what = "Netzladen" if record["action"] == "l" else "Sperre"
+        what = "Laden aus dem Netz" if record["action"] == "l" else "Entladung gesperrt"
         start = dt_util.parse_datetime(record.get("start") or "")
         since = f" seit {dt_util.as_local(start):%H:%M}" if start else ""
         amount = f"{kwh:.2f}".replace(".", ",")
@@ -605,7 +609,7 @@ class Executor:
             von = dt_util.as_local(dt_util.utc_from_timestamp(b["von"] / 1000))
             bis = dt_util.as_local(dt_util.utc_from_timestamp(b["bis"] / 1000))
             day = "heute" if von.date() == now.date() else "morgen"
-            what = "🔒 Entladung sperren" if b["was"] == "h" else "🔌 Aus dem Netz laden"
+            what = "🔒 Entladung gesperrt" if b["was"] == "h" else "🔌 Laden aus dem Netz"
             kwh = f" {str(b.get('kwh')).replace('.', ',')} kWh" if b["was"] == "l" else ""
             saves = _eur(b["spart"] or 0)
             lines.append(f"{day} {von:%H:%M}–{bis:%H:%M} {what}{kwh} zu {round(b['ct'])} ct · spart {saves}")
@@ -613,7 +617,8 @@ class Executor:
         if len(items) > 3:
             lines.append(f"+ {len(items) - 3} weitere in der EMS-App")
         self.state["requested_at"] = now.isoformat()
-        self.log("Anfrage", f"Freigabe angefragt für {len(items)} Aktion(en)")
+        count = "1 Aktion" if len(items) == 1 else f"{len(items)} Aktionen"
+        self.log("Anfrage", f"Freigabe angefragt für {count}")
         self._changed()
         await self.notify(
             "🔋 Akku-Plan freigeben?",
@@ -720,7 +725,7 @@ def _describe(items: list[dict[str, Any]]) -> str:
         von = dt_util.as_local(dt_util.utc_from_timestamp(b["von"] / 1000))
         bis = dt_util.as_local(dt_util.utc_from_timestamp(b["bis"] / 1000))
         kwh = str(b.get("kwh")).replace(".", ",")
-        what = "Entladung sperren" if b["was"] == "h" else f"Netzladen {kwh} kWh"
+        what = "Entladung gesperrt" if b["was"] == "h" else f"Laden aus dem Netz, {kwh} kWh"
         saves = _eur(b["spart"] or 0)
         parts.append(f"{von:%d.%m. %H:%M}–{bis:%H:%M} {what} zu {round(b['ct'])} ct (spart {saves})")
     return "; ".join(parts)

@@ -150,7 +150,7 @@ export function planOption(
       {
         type: "category",
         gridIndex: 1,
-        data: compact ? ["WP", "Akku"] : ["Wärmepumpe", "Akku"],
+        data: compact ? ["Wärme-\npumpe", "Akku"] : ["Wärmepumpe", "Akku"],
         axisTick: { show: false },
         axisLine: { show: false },
         axisLabel: { fontSize: 13, color: ink },
@@ -304,6 +304,9 @@ export function historyOption(rows: HistoryRow[]): ChartOption {
   if (!rows.length) return {};
   const first = rows[0].start;
   const last = rows[rows.length - 1].start + QUARTER_MS;
+  const prices = rows.map((r) => r.preis_ct).filter((p): p is number => p != null);
+  const priceMin = Math.min(...prices);
+  const priceMax = Math.max(...prices);
   const grids = [
     { top: 28, height: 120, left: 74, right: 20 },
     { top: 176, height: 48, left: 74, right: 20 },
@@ -381,7 +384,7 @@ export function historyOption(rows: HistoryRow[]): ChartOption {
         xAxisIndex: 0,
         yAxisIndex: 0,
         symbol: "none",
-        lineStyle: { width: 1.5, type: "dashed", color: COLORS.socWithout },
+        lineStyle: { width: 1.5, type: "dashed", color: COLORS.soc },
         data: rows.map((r) => [r.start + QUARTER_MS, r.plan_soc]),
       },
       stripSeries(1, strip),
@@ -393,7 +396,7 @@ export function historyOption(rows: HistoryRow[]): ChartOption {
         barWidth: "85%",
         data: rows.map((r) => ({
           value: [r.start + QUARTER_MS / 2, r.preis_ct],
-          itemStyle: { color: (ACTIONS[r.aktion ?? "n"] ?? ACTIONS.n).color },
+          itemStyle: { color: r.preis_ct != null ? priceColor(r.preis_ct, priceMin, priceMax) : COLORS.forecast },
         })),
       },
     ],
@@ -426,7 +429,7 @@ export function savingsOption(days: string[], measured: (number | null)[], forec
     yAxis: [{ type: "value", name: "€", ...axisStyle(), splitNumber: 3 }],
     series: [
       { name: "Gemessen", type: "bar", data: measured, itemStyle: { color: COLORS.measured, borderRadius: [3, 3, 0, 0] } },
-      { name: "Prognose", type: "bar", data: forecast, itemStyle: { color: COLORS.forecast, borderRadius: [3, 3, 0, 0] } },
+      { name: "Vom Plan versprochen", type: "bar", data: forecast, itemStyle: { color: COLORS.forecast, borderRadius: [3, 3, 0, 0] } },
     ],
   };
 }
@@ -450,7 +453,7 @@ export function profileOption(profile: number[], hour: number): ChartOption {
         type: "bar",
         data: profile.map((v, h) => ({
           value: v,
-          itemStyle: { color: h === hour ? COLORS.soc : COLORS.forecast, borderRadius: [3, 3, 0, 0] },
+          itemStyle: { color: COLORS.load, opacity: h === hour ? 1 : 0.4, borderRadius: [3, 3, 0, 0] },
         })),
       },
     ],

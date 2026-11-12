@@ -292,6 +292,22 @@ describe("plain language", () => {
   });
 });
 
+describe("older log texts", () => {
+  it("speaks the fixed terms", () => {
+    expect(plainText("Netzladen seit 02:46: 8,20 kWh geladen")).toBe("Laden aus dem Netz seit 02:46: 8,20 kWh geladen");
+    expect(plainText("Sperre seit 04:30: 2,30 kWh aus dem Netz")).toBe("Entladung gesperrt seit 04:30: 2,30 kWh aus dem Netz");
+    expect(plainText("11.11. 02:30–04:45 Netzladen 10,5 kWh zu 35 ct; 11.11. 04:45–07:15 Entladung sperren zu 39 ct")).toBe(
+      "11.11. 02:30–04:45 Laden aus dem Netz, 10,5 kWh zu 35 ct; 11.11. 04:45–07:15 Entladung gesperrt zu 39 ct",
+    );
+    expect(plainText("Freigabe angefragt für 1 Aktion(en)")).toBe("Freigabe angefragt für 1 Aktion");
+    expect(plainText("Freigabe angefragt für 4 Aktion(en)")).toBe("Freigabe angefragt für 4 Aktionen");
+    expect(plainText("Eigenverbrauch → Laden aus dem Netz nicht bestätigt nach 60 s (jetzt: Eigenverbrauch)")).toBe(
+      "Umschalten von Eigenverbrauch auf Laden aus dem Netz nicht bestätigt: nach 60 s meldet der Wechselrichter Eigenverbrauch",
+    );
+    expect(plainText("Anders (unavailable / unavailable / -1 W)")).toBe("Nicht erreichbar");
+  });
+});
+
 describe("decisions", () => {
   const e = (art: string, text: string) => ({ zeit: "2026-11-09T10:00:00+01:00", art, text });
   it("collapses repeats, drops empty bookings and filters by actor", () => {

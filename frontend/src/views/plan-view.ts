@@ -21,6 +21,8 @@ interface Feedback {
   kind: "ok" | "error";
   text: string;
   at: number;
+  /** Where the answer appears: next to the approval card or in the control card. */
+  place: "approval" | "control";
 }
 
 /** What the plan does in a block, as a sentence for people who do not know the terms. */
@@ -110,14 +112,42 @@ export class EmsPlanView extends LitElement {
     return ms && ms > Date.now() ? ms : null;
   }
 
-  private async call(domain: string, service: string, data: Record<string, unknown>, done: string) {
+  /** Plan blocks an existing approval covers that have not ended yet. */
+  private approvedBlocks(until: number): PlanBlock[] {
+    const approval = configured(this.hass, this.config, "freigabe");
+    const codes: string[] = approval?.attributes.freigegeben ?? [];
+    const plan = sensor(this.hass, this.config, "plan");
+    const blocks: PlanBlock[] = plan?.attributes.aktionen ?? [];
+    return blocks.filter((b) => codes.includes(b.was) && b.bis > Date.now() && b.von < until);
+  }
+
+  private visibleFeedback(place: Feedback["place"]): Feedback | undefined {
+    const f = this.feedback;
+    if (!f || Date.now() - f.at >= FEEDBACK_MS) return undefined;
+    // without a control card, every answer appears at the top
+    const hasControl = !!configured(this.hass, this.config, "modus");
+    return f.place === place || (!hasControl && place === "approval") ? f : undefined;
+  }
+
+  private async call(
+    domain: string,
+    service: string,
+    data: Record<string, unknown>,
+    done: string,
+    place: Feedback["place"] = "control",
+  ) {
     this.busy = true;
     try {
       await this.hass.callService(domain, service, data);
-      this.feedback = { kind: "ok", text: done, at: Date.now() };
+      this.feedback = { kind: "ok", text: done, at: Date.now(), place };
     } catch (e) {
       const message = (e as { message?: string }).message ?? String(e);
-      this.feedback = { kind: "error", text: `Hat nicht geklappt: ${message}. Bitte noch einmal versuchen.`, at: Date.now() };
+      this.feedback = {
+        kind: "error",
+        text: `Hat nicht geklappt: ${plainText(message)}. Bitte noch einmal versuchen.`,
+        at: Date.now(),
+        place,
+      };
     } finally {
       this.busy = false;
     }
@@ -126,7 +156,10 @@ export class EmsPlanView extends LitElement {
   render() {
     const plan = sensor(this.hass, this.config, "plan");
     const pending = this.pending();
+    const until = this.approvedUntil();
+    const approved = !pending.length && until ? this.approvedBlocks(until) : [];
     const control = this.renderControl();
+    const topFeedback = this.visibleFeedback("approval");
     return html`<style>
         .stack {
           display: grid;
@@ -141,6 +174,13 @@ export class EmsPlanView extends LitElement {
         .row.single {
           grid-template-columns: minmax(0, 1fr);
         }
+        .top-status:not(:has(.warn)) {
+          display: none;
+        }
+        .top-status .warn {
+          margin: 0;
+          font-size: 1rem;
+        }
         @media (max-width: 900px) {
           .row {
             grid-template-columns: minmax(0, 1fr);
@@ -148,7 +188,12 @@ export class EmsPlanView extends LitElement {
         }
       </style>
       <div class="stack">
-        ${pending.length ? this.renderApproval(pending) : nothing}
+        <div role="status" aria-live="polite" class="top-status">
+          ${topFeedback
+            ? html`<div class="warn ${topFeedback.kind === "error" ? "error" : "ok"}">${topFeedback.text}</div>`
+            : nothing}
+        </div>
+        ${pending.length ? this.renderApproval(pending) : approved.length ? this.renderApproved(approved, until!) : nothing}
         <div class="row ${control === nothing ? "single" : ""}">${this.renderNow()} ${control}</div>
         <div class="card">${this.renderChart(plan?.attributes.slots ?? [])}</div>
         <div class="row">${this.renderBlocks()}</div>
@@ -159,6 +204,8 @@ export class EmsPlanView extends LitElement {
 
   private renderApproval(pending: PlanBlock[]) {
     const color = ACTIONS[pending[0].was]?.color ?? ACTIONS.h.color;
+    const approval = configured(this.hass, this.config, "freigabe");
+    const holds = toMs(approval?.attributes.gilt_bis_bei_freigabe);
     return html`<section class="card approval" style="--tone:${color}" aria-labelledby="approval-title">
       <style>
         .approval {
@@ -181,7 +228,7 @@ export class EmsPlanView extends LitElement {
           gap: 4px 12px;
         }
         .approval .icon {
-          grid-row: span 3;
+          grid-row: span 4;
           width: 40px;
           height: 40px;
           border-radius: 12px;
@@ -196,6 +243,31 @@ export class EmsPlanView extends LitElement {
         }
         .approval .cost {
           font-variant-numeric: tabular-nums;
+        }
+        .approval details {
+          font-size: 0.9rem;
+        }
+        .approval details summary {
+          min-height: 44px;
+          display: flex;
+          align-items: center;
+          list-style: none;
+          gap: 4px;
+          width: fit-content;
+        }
+        .approval details summary::-webkit-details-marker {
+          display: none;
+        }
+        .approval details summary::before {
+          content: "▸";
+          transition: transform 0.15s ease-out;
+        }
+        .approval details[open] summary::before {
+          transform: rotate(90deg);
+        }
+        .approval .scope {
+          margin: 0 0 14px;
+          max-width: 70ch;
         }
         .approval .cost b {
           white-space: nowrap;
@@ -228,11 +300,21 @@ export class EmsPlanView extends LitElement {
                 ><ha-icon icon=${ACTIONS[b.was]?.icon ?? "mdi:battery"}></ha-icon
               ></span>
               <span class="what">${when(b.von)}–${time(b.bis)}: ${blockSentence(b)}</span>
-              <span class="cost">Strom kostet dann ${ct(b.ct)} · spart ca. <b>${eur(b.spart)}</b></span>
-              ${b.grund ? html`<span class="why">${plainText(b.grund)}</span>` : nothing}
+              <span class="cost">Spart ca. <b>${eur(b.spart)}</b></span>
+              ${b.grund ? html`<span class="why">${plainText(b.grund)}.</span>` : nothing}
+              ${b.rechnung
+                ? html`<details class="why">
+                    <summary>Rechnung</summary>
+                    ${plainText(b.rechnung)}.
+                  </details>`
+                : nothing}
             </li>`,
         )}
       </ul>
+      <p class="scope">
+        ${holds ? html`Die Freigabe gilt bis <b>${when(holds)}</b>. ` : nothing}Ohne Freigabe läuft der Akku normal
+        weiter.
+      </p>
       <div class="buttons">
         <button
           class="action"
@@ -245,6 +327,7 @@ export class EmsPlanView extends LitElement {
               pending.length === 1
                 ? "Freigegeben. Das EMS schaltet zur geplanten Zeit."
                 : `${pending.length} Aktionen freigegeben. Das EMS schaltet zur geplanten Zeit.`,
+              "approval",
             )}
         >
           <ha-icon icon="mdi:check"></ha-icon>${pending.length === 1 ? "Freigeben" : "Alle freigeben"}
@@ -252,11 +335,80 @@ export class EmsPlanView extends LitElement {
         <button
           class="action secondary"
           ?disabled=${this.busy}
-          @click=${() => this.call("ems", "ablehnen", {}, "Abgelehnt. Der Akku läuft normal weiter.")}
+          @click=${() =>
+            this.call("ems", "ablehnen", {}, "Abgelehnt. Der Akku läuft normal weiter.", "approval")}
         >
           <ha-icon icon="mdi:close"></ha-icon>Ablehnen
         </button>
       </div>
+    </section>`;
+  }
+
+  /** After the approval: what runs when, how long the approval holds, and the way back. */
+  private renderApproved(blocks: PlanBlock[], until: number) {
+    const color = ACTIONS[blocks[0].was]?.color ?? ACTIONS.h.color;
+    return html`<section class="card approved" style="--tone:${color}" aria-labelledby="approved-title">
+      <style>
+        .approved {
+          background: color-mix(in srgb, var(--tone) 9%, var(--ha-card-background, var(--card-background-color, #fff)));
+          border-color: color-mix(in srgb, var(--tone) 45%, transparent);
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 12px 24px;
+          padding: 16px 20px;
+        }
+        .approved .body {
+          flex: 1 1 320px;
+          min-width: 0;
+        }
+        .approved h2 {
+          font-size: 1.1rem;
+          margin: 0 0 4px;
+        }
+        .approved ul {
+          list-style: none;
+          margin: 0 0 4px;
+          padding: 0;
+          display: grid;
+          gap: 4px;
+        }
+        .approved li {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 4px 10px;
+          font-variant-numeric: tabular-nums;
+        }
+      </style>
+      <div class="body">
+        <h2 id="approved-title"><ha-icon icon="mdi:check-circle-outline"></ha-icon>Freigegeben</h2>
+        <ul>
+          ${blocks.map(
+            (b) =>
+              html`<li>
+                <span>${when(b.von)}–${time(b.bis)}</span>
+                <span class="pill" style=${pillColor(b.was)}>${ACTIONS[b.was].name}</span>
+                <span class="muted">spart ca. ${eur(b.spart)}</span>
+              </li>`,
+          )}
+        </ul>
+        <div class="muted small">Gilt bis ${when(until)}. Das EMS schaltet zur geplanten Zeit.</div>
+      </div>
+      <button
+        class="action secondary"
+        ?disabled=${this.busy}
+        @click=${() =>
+          this.call(
+            "ems",
+            "freigabe_zuruecknehmen",
+            {},
+            "Freigabe zurückgenommen. Der Akku läuft normal weiter.",
+            "approval",
+          )}
+      >
+        <ha-icon icon="mdi:undo"></ha-icon>Freigabe zurücknehmen
+      </button>
     </section>`;
   }
 
@@ -503,6 +655,8 @@ export class EmsPlanView extends LitElement {
     // switching to a mode that acts more on its own asks first; back to a safer mode does not
     if (to > from) {
       this.confirmMode = option;
+      // move focus into the question, so keyboard and screen-reader users notice it
+      this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>(".confirm .action")?.focus());
       return;
     }
     this.applyMode(mode, option);
@@ -534,7 +688,7 @@ export class EmsPlanView extends LitElement {
     const until = this.approvedUntil();
     const ist: string | undefined = target?.attributes.ist;
     const options: string[] = mode.attributes.options ?? MODES.map((m) => m.name);
-    const feedback = this.feedback && Date.now() - this.feedback.at < FEEDBACK_MS ? this.feedback : undefined;
+    const feedback = this.visibleFeedback("control");
     const plan = sensor(this.hass, this.config, "plan");
     const next = ((plan?.attributes.aktionen ?? []) as PlanBlock[]).find((b) => b.bis > Date.now());
     return html`<section class="card control" aria-labelledby="control-title">
@@ -574,6 +728,14 @@ export class EmsPlanView extends LitElement {
         }
         .mode[aria-checked="true"] .dot {
           border: 5px solid var(--primary-color);
+        }
+        .mode[aria-disabled="true"] {
+          opacity: 0.6;
+          cursor: progress;
+        }
+        .mode[aria-checked="true"] .text {
+          /* secondary text on the primary tint: mixed from the text colour, not grey (contrast ≥ 4.5:1) */
+          color: color-mix(in srgb, var(--primary-text-color) 78%, var(--primary-color));
         }
         .mode .name {
           font-weight: 600;
@@ -617,17 +779,6 @@ export class EmsPlanView extends LitElement {
         .status.error {
           background: color-mix(in srgb, var(--error-color, #db4437) 14%, transparent);
         }
-        .link {
-          font: inherit;
-          background: none;
-          border: none;
-          padding: 4px 0;
-          min-height: 32px;
-          color: var(--primary-color);
-          text-decoration: underline;
-          text-underline-offset: 2px;
-          cursor: pointer;
-        }
       </style>
       <h2 id="control-title"><ha-icon icon="mdi:tune-variant"></ha-icon>Steuerung</h2>
       <div role="status" aria-live="polite">
@@ -642,8 +793,8 @@ export class EmsPlanView extends LitElement {
             role="radio"
             aria-checked=${checked}
             tabindex=${checked ? 0 : -1}
-            ?disabled=${this.busy}
-            @click=${() => this.selectMode(mode, o)}
+            aria-disabled=${this.busy}
+            @click=${() => !this.busy && this.selectMode(mode, o)}
             @keydown=${(ev: KeyboardEvent) => this.onModeKey(ev, mode, options)}
           >
             <span class="dot" aria-hidden="true"></span><span class="name">${o}</span>
@@ -652,7 +803,18 @@ export class EmsPlanView extends LitElement {
         })}
       </div>
       ${this.confirmMode
-        ? html`<div class="confirm" role="alertdialog" aria-label="Modus wechseln">
+        ? html`<div
+            class="confirm"
+            role="alertdialog"
+            aria-label="Modus wechseln"
+            @keydown=${(ev: KeyboardEvent) => {
+              if (ev.key !== "Escape") return;
+              this.confirmMode = undefined;
+              this.updateComplete.then(() =>
+                this.renderRoot.querySelector<HTMLElement>('.mode[aria-checked="true"]')?.focus(),
+              );
+            }}
+          >
             <b>„${this.confirmMode}“ einschalten?</b>
             ${MODES.find((m) => m.name === this.confirmMode)?.text}
             ${next
@@ -671,24 +833,14 @@ export class EmsPlanView extends LitElement {
         ${inverter ? html`<dt>Wechselrichter</dt><dd>${plainState(inverter.state)}</dd>` : nothing}
         ${until
           ? html`<dt>Freigegeben bis</dt>
-              <dd>
-                ${when(until)}
-                <br /><button
-                  class="link"
-                  ?disabled=${this.busy}
-                  @click=${() =>
-                    this.call(
-                      "ems",
-                      "freigabe_zuruecknehmen",
-                      {},
-                      "Freigabe zurückgenommen. Der Akku läuft normal weiter.",
-                    )}
-                >
-                  Freigabe zurücknehmen
-                </button>
-              </dd>`
+              <dd>${when(until)}</dd>`
           : nothing}
       </dl>
+      ${ist === "Nicht erreichbar"
+        ? html`<div class="warn error">
+            Der Wechselrichter meldet keinen Zustand. Das EMS schaltet erst wieder, wenn er erreichbar ist.
+          </div>`
+        : nothing}
       ${ist && ist.startsWith("Anders")
         ? html`<div class="warn">
             Am Wechselrichter ist etwas anderes eingestellt (${plainText(ist)}). Das EMS greift nicht ein, bis das

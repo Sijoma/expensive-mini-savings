@@ -134,5 +134,6 @@ def test_blocks_save_and_have_reasons():
         assert b.saves_ct > 0
         if b.action is Action.HOLD:
             assert b.value_ct > b.now_ct  # that is why it is kept
-    assert plan.reason_now.startswith("Strom aus dem Netz kostet in dieser Zeit")
+    assert plan.reason_now.startswith("Strom kostet in dieser Zeit")
+    assert all(b.calculation for b in plan.blocks)
     assert " ct" in plan.reason_now and "für " in plan.reason_now

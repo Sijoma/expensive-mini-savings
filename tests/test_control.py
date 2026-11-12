@@ -143,7 +143,8 @@ def test_inverter_state():
     assert c.inverter_state(c.SELF_CONSUMPTION, c.FORCED_STOP, 10) == c.HOLD
     assert c.inverter_state(c.FORCED_MODE, c.FORCED_CHARGE, 5900) == c.CHARGE
     assert c.inverter_state("VPP", c.FORCED_STOP, 5900).startswith("Anders (VPP")
-    assert c.inverter_state(None, None, None) == "Anders (None / None / -1 W)"
+    assert c.inverter_state(None, None, None) == c.UNREACHABLE
+    assert c.inverter_state("unavailable", "unavailable", None) == c.UNREACHABLE
 
 
 # ---- booking ----

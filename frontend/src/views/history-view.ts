@@ -128,10 +128,18 @@ export class EmsHistoryView extends LitElement {
                 >
                 ${rows.some((r) => r.plan_soc != null)
                   ? html`<span
-                      ><i style="display:inline-block;width:10px;height:3px;background:${COLORS.socWithout}"></i> Akku
-                      laut Plan</span
+                      ><i
+                        style="display:inline-block;width:10px;height:0;border-top:2px dashed ${COLORS.soc}"
+                      ></i>
+                      Akku laut Plan</span
                     >`
                   : nothing}
+                <span
+                  ><i
+                    style="display:inline-block;width:18px;height:10px;border-radius:3px;background:linear-gradient(90deg, ${COLORS.cheap}, ${COLORS.middle}, ${COLORS.expensive})"
+                  ></i>
+                  Preis von günstig bis teuer</span
+                >
               </div>`
           : html`<div class="muted">
               Für diesen Tag gibt es keine Messung. Die Integration zeichnet jede Viertelstunde auf, wenn

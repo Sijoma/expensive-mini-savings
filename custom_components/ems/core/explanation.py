@@ -40,6 +40,9 @@ class Block:
     saves_ct: float
     """Compared with the same plan without this block (recomputed)."""
     reason: str
+    """Plain sentence: what the block is for."""
+    calculation: str = ""
+    """The arithmetic behind it (value of one kWh later against now, or savings after losses and wear)."""
 
 
 @dataclass(frozen=True)
@@ -164,25 +167,34 @@ def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tari
         now = sum(value_now(s, battery) for s in slots[first:until]) / (until - first)
         steps = with_plan.steps[first:until]
         used = _used_when(slots, with_plan, alternative, until)
-        purpose = (
-            f"für {used[0]:%H:%M}–{used[1]:%H:%M} (Ø {used[2]:.0f} ct)"
-            if used
-            else f"für später (≈ {(w + battery.wear_ct) / battery.efficiency_discharge:.0f} ct)"
-        )
+        nb = "\u00a0"  # keeps "Ø 45" together
+        window = f"für {used[0]:%H:%M}–{used[1]:%H:%M}" if used else "für später"
+        worth = (w + battery.wear_ct) / battery.efficiency_discharge
+        if used:
+            then = f", dann kostet Strom Ø{nb}{used[2]:.0f} ct"
+        else:
+            then = f", dann ist 1 kWh ≈{nb}{worth:.0f} ct wert"
         if action is Action.HOLD:
             grid = sum(s.import_kwh for s in steps)
             reason = (
-                f"Strom aus dem Netz kostet in dieser Zeit {price:.0f} ct. Der Akku hebt seine Ladung auf "
-                f"{purpose}: 1 kWh daraus spart dann ≈ {w:.0f} ct, in dieser Zeit nur ≈ {now:.0f} ct"
+                f"Strom kostet in dieser Zeit {price:.0f} ct. Der Akku hebt seine Ladung {window} auf{then}"
+            )
+            calculation = (
+                f"1 kWh aus dem Akku spart später ≈ {w:.0f} ct, in dieser Zeit nur ≈ {now:.0f} ct "
+                "(nach Verlusten und Verschleiß)"
             )
         else:
             grid = sum(s.grid_charged_kwh for s in steps)
             # value of the first charged kWh (before charging): the last one is worth less
             w = max(value[max(first - 1, 0) : until])
-            reason = f"{grid:.1f} kWh laden zu {price:.0f} ct {purpose}. ".replace(
-                ".", ",", 1
-            ) + f"Nach Verlusten und Verschleiß spart das {saves / 100:.2f} €".replace(".", ",")
-        blocks.append(Block(first, until, action, price, w, now, grid, saves, reason))
+            reason = f"Laden zu {price:.0f} ct {window}{then}"
+            kwh = f"{grid:.1f}".replace(".", ",")
+            eur = f"{saves / 100:.2f}".replace(".", ",")
+            calculation = (
+                f"{kwh} kWh aus dem Netz, 1 kWh im Akku ist später ≈ {w:.0f} ct wert. "
+                f"Nach Verlusten und Verschleiß spart das {eur} €"
+            )
+        blocks.append(Block(first, until, action, price, w, now, grid, saves, reason, calculation))
     return Plan(slots, actions, value, with_plan, without, blocks, plan_boost(slots, with_plan.steps))
 
 

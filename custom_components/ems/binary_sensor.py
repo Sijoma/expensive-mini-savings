@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from . import control as c
 from .entity import ExecutorEntity
 
 
@@ -33,9 +34,17 @@ class ApprovalPending(ExecutorEntity, BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         a = self.executor.approval
         until = dt_util.utc_from_timestamp(a.until_ms / 1000) if a.until_ms else None
+        offered = self.executor.offered()
+        would_hold = c.approval_end(offered, dt_util.now()) if offered else None
         return {
             # all runnable blocks of the next 24 h: this is what gets approved
-            "aktionen": self.executor.offered(),
+            "aktionen": offered,
+            # how long an approval given now would hold
+            "gilt_bis_bei_freigabe": (
+                dt_util.as_local(dt_util.utc_from_timestamp(would_hold / 1000)).isoformat()
+                if would_hold
+                else None
+            ),
             "freigegeben_bis": dt_util.as_local(until).isoformat() if until else None,
             "freigegeben": sorted(a.codes),
             "freigegeben_kwh": a.kwh,

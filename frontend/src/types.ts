@@ -67,6 +67,7 @@ export interface PlanBlock {
   spart: number;
   netz_kwh?: number;
   grund?: string;
+  rechnung?: string;
 }
 
 export interface HistoryRow {
