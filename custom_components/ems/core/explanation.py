@@ -149,6 +149,14 @@ def hold_when_full(
     return changed
 
 
+def _distinct_ct(a: float, b: float) -> tuple[str, str]:
+    """Two ct values for a comparison: whole numbers, or one decimal when rounding would make them look
+    equal (11.4 against 11.0 must not read as 11 against 11)."""
+    if round(a) != round(b):
+        return f"{a:.0f}", f"{b:.0f}"
+    return f"{a:.1f}".replace(".", ","), f"{b:.1f}".replace(".", ",")
+
+
 def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tariff, **kwargs) -> Plan:
     """Plans, recomputes and explains. kwargs as for `optimizer.plan_with_value`."""
     slots = list(slots)
@@ -179,8 +187,9 @@ def create_plan(slots: Sequence[Slot], e0: float, battery: Battery, tariff: Tari
             reason = (
                 f"Strom kostet in dieser Zeit {price:.0f} ct. Der Akku hebt seine Ladung {window} auf{then}"
             )
+            later_ct, now_ct = _distinct_ct(w, now)
             calculation = (
-                f"1 kWh aus dem Akku spart später ≈ {w:.0f} ct, in dieser Zeit nur ≈ {now:.0f} ct "
+                f"1 kWh aus dem Akku spart später ≈ {later_ct} ct, in dieser Zeit nur ≈ {now_ct} ct "
                 "(nach Verlusten und Verschleiß)"
             )
         else:

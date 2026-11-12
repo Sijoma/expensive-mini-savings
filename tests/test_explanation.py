@@ -69,3 +69,10 @@ def test_24h_savings_count_what_stays_in_the_battery():
     plan = create_plan(slots, 0.0, BATTERY, TARIFF)
     assert plan.saves_ct > 0
     assert savings_24h(plan, BATTERY) > 0
+
+
+def test_ct_comparison_keeps_a_visible_difference():
+    from custom_components.ems.core.explanation import _distinct_ct
+
+    assert _distinct_ct(12.4, 10.6) == ("12", "11")
+    assert _distinct_ct(11.4, 11.0) == ("11,4", "11,0")
