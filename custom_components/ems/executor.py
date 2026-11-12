@@ -29,6 +29,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from . import archive
 from . import control as c
 from .const import (
     CONF_CHARGED,
@@ -144,6 +145,8 @@ class Executor:
         self._unsub: list[Callable[[], None]] = []
         self._warned_yaml = False
         self.target_entity_id: str | None = None
+        self.archive_folder = Path(hass.config.path("ems"))
+        self._backfilled_at: str | None = None
         """Set by the target sensor; used for logbook entries."""
 
     # ---- persistence ----
@@ -157,10 +160,27 @@ class Executor:
             data = await self.hass.async_add_executor_job(_read_takeover, path)
             if data:
                 self.state = from_takeover(data)
+                self._backfill_archive()
                 self.log("Modus", "Steuerung von der YAML-Automation in die Integration übernommen")
                 _LOGGER.info("EMS: state of the former YAML executor taken over from %s", path)
             self._save()
+        if not self.state.get("archive"):
+            self._backfill_archive()
+        if self.state["archive"].get("since") == self._backfilled_at:
+            await self.store.async_save(self.state)  # right away: a reload must not backfill twice
         self.target = self.state.get("set_by_ems") or c.NORMAL
+
+    def _archive(self, kind: str, *entries: dict[str, Any]) -> None:
+        self.hass.async_add_executor_job(archive.append, self.archive_folder, kind, list(entries))
+
+    def _backfill_archive(self) -> None:
+        """First start with the archive: write what the store already holds (oldest first)."""
+        self._archive(archive.LOG, *reversed(self.state["log"]))
+        self._archive(archive.SAVINGS, *reversed(self.state["savings"]["items"]))
+        self._archive(archive.FORECAST, *self.state["forecast"].get("days", []))
+        self._backfilled_at = dt_util.now().isoformat(timespec="seconds")
+        self.state["archive"] = {"since": self._backfilled_at}
+        self._save()
 
     def _save(self) -> None:
         self.store.async_delay_save(lambda: self.state, 2)
@@ -264,6 +284,7 @@ class Executor:
         )
         self.evaluate()
         self._remember_meter()
+        async_dispatcher_send(h, SIGNAL_EXECUTOR)
         h.async_create_task(self.apply("start"))
 
     @callback
@@ -303,6 +324,7 @@ class Executor:
     @callback
     def _plan_updated(self) -> None:
         self.evaluate()
+        async_dispatcher_send(self.hass, SIGNAL_EXECUTOR)
 
     @callback
     def _inverter_changed(self, _event: Event) -> None:
@@ -311,6 +333,7 @@ class Executor:
     @callback
     def _every_minute(self, now: datetime) -> None:
         self.evaluate()
+        async_dispatcher_send(self.hass, SIGNAL_EXECUTOR)
         self.hass.async_create_task(self._maybe_request(now))
 
     @callback
@@ -550,6 +573,7 @@ class Executor:
             "kwh": round(kwh, 2), "betrag": round(eur, 3),
         }  # fmt: skip
         savings["items"] = [entry, *savings["items"]][:SAVINGS_MAX]
+        self._archive(archive.SAVINGS, entry)
         what = "Netzladen" if record["action"] == "l" else "Sperre"
         start = dt_util.parse_datetime(record.get("start") or "")
         since = f" seit {dt_util.as_local(start):%H:%M}" if start else ""
@@ -646,6 +670,7 @@ class Executor:
             "preis": self.price_ct(),
         }
         self.state["log"] = [entry, *self.state["log"]][:LOG_MAX]
+        self._archive(archive.LOG, entry)
 
     @callback
     def _forecast(self, _now: datetime) -> None:
@@ -659,6 +684,7 @@ class Executor:
         forecast["last_day"] = value
         entry = {"at": dt_util.now().isoformat(timespec="minutes"), "value": value}
         forecast["days"] = [*forecast.get("days", []), entry][-FORECAST_DAYS:]
+        self._archive(archive.FORECAST, entry)
         self._changed()
 
     async def reset_forecast(self) -> None:

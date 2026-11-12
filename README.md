@@ -133,6 +133,12 @@ Measurements (`messung: true`, written per quarter hour to `/config/ems/messung/
 forced mode, discharge limit; Sungrow defaults). `aufzeichnung: true` additionally stores the inputs and the
 plan once per hour in `/config/ems/aufzeichnung/`.
 
+The executor keeps only the latest entries in its store (50 log entries, 100 booked actions, 100 forecast
+days) and appends every entry permanently to an archive (always on, a few KB per month):
+`/config/ems/protokoll/YYYY-MM.jsonl` (log), `/config/ems/abrechnung/YYYY.jsonl` (booked actions),
+`/config/ems/prognose/YYYY.jsonl` (daily forecast). On the first start with the archive, the entries already
+in the store are written once.
+
 ### Entities
 
 | Entity | State | Main attributes |

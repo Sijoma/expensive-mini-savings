@@ -16,6 +16,7 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from test_integration import ENTITIES
 
+from custom_components.ems import archive
 from custom_components.ems import control as c
 
 MODE = "select.ems_mode"
@@ -295,6 +296,10 @@ async def test_takeover_of_the_yaml_executor(hass, set_states, tmp_path, inverte
     assert "übernommen" in log[0]["text"] and log[1]["text"] == "Korrektur"
     assert not (tmp_path / "ems" / "uebernahme.json").exists()
     assert (tmp_path / "ems" / "uebernahme.json.uebernommen").exists()
+    log_archive = archive.read(tmp_path / "ems", archive.LOG)
+    assert log_archive[0]["text"] == "Korrektur" and "übernommen" in log_archive[1]["text"]
+    assert len(log_archive) == 2  # taken-over entries once, no duplicate from the backfill
+    assert archive.read(tmp_path / "ems", archive.SAVINGS) == [{"was": "k", "betrag": 1.109}]
 
 
 async def test_values_fixed_in_yaml_cannot_be_changed(hass, set_states, tmp_path, inverter):
@@ -362,3 +367,65 @@ async def test_forecast_is_recorded_daily_and_can_be_reset(hass, ems, monkeypatc
     assert float(state.state) == 0 and state.attributes["tage"] == []
     assert state.attributes["last_reset"] is not None
     assert ems.state["log"][0]["text"].startswith("Prognose zurückgesetzt (vorher 3,00 €)")
+
+
+async def test_archive_keeps_everything_the_store_trims(hass, ems, monkeypatch, tmp_path):
+    for i in range(60):
+        ems.log("Hinweis", f"Eintrag {i}")
+    ems._book({"action": "h", "start": "2026-11-11T04:30+01:00"}, 2.3, 0.52, dt_util.now())
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(attribute={"ersparnis_24h": 0.3}))
+    ems._forecast(dt_util.now())
+    await hass.services.async_call("ems", "prognose_zuruecksetzen", blocking=True)
+    await hass.async_block_till_done()
+    folder = tmp_path / "ems"
+    texts = [e["text"] for e in archive.read(folder, archive.LOG)]
+    assert len(ems.state["log"]) == 50
+    assert "Eintrag 0" in texts and "Eintrag 59" in texts  # trimmed in the store, kept in the archive
+    assert texts.index("Eintrag 0") < texts.index("Eintrag 59")
+    (booked,) = archive.read(folder, archive.SAVINGS)
+    assert booked["was"] == "h" and booked["betrag"] == 0.52
+    assert [d["value"] for d in archive.read(folder, archive.FORECAST)] == [0.3]  # survives the reset
+    month = f"{dt_util.now():%Y-%m}"
+    assert (folder / "protokoll" / f"{month}.jsonl").exists()
+
+
+async def test_archive_is_backfilled_once_from_an_existing_store(
+    hass, hass_storage, set_states, tmp_path, inverter
+):
+    hass.config.config_dir = str(tmp_path)
+    log = [
+        {"zeit": "2026-11-11T07:15:07+01:00", "art": "Geschaltet", "text": "zwei"},
+        {"zeit": "2026-10-31T23:00:00+01:00", "art": "Modus", "text": "eins"},
+    ]
+    items = [{"start": "2026-11-11T02:46+01:00", "ende": "2026-11-11T04:30+01:00", "was": "l", "betrag": 1.3}]
+    days = [{"at": "2026-11-11T14:05+01:00", "value": 0.283}]
+    hass_storage["ems.steuerung"] = {
+        "version": 1, "minor_version": 1, "key": "ems.steuerung",
+        "data": {
+            "mode": c.PLAN_ONLY, "log": log,
+            "savings": {"value": 1.3, "items": items, "since": "2026-11-09"},
+            "forecast": {"value": 0.283, "last_day": 0.283, "since": "2026-11-11", "days": days},
+        },
+    }  # fmt: skip
+    set_states(**{"sensor.battery_level": "45.0"})
+    conf = {
+        k: v
+        for k, v in ENTITIES.items()
+        if k not in ("verschleiss", "netzladeleistung", "soll", "lastprofil")
+    }
+    assert await async_setup_component(
+        hass, "ems", {"ems": {**conf, "aufzeichnung": False, "messung": False}}
+    )
+    await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries("ems")
+    ex = entry.runtime_data.executor
+    folder = tmp_path / "ems"
+    assert [e["text"] for e in archive.read(folder, archive.LOG)] == ["eins", "zwei"]
+    assert (folder / "protokoll" / "2026-10.jsonl").exists()
+    assert (folder / "protokoll" / "2026-11.jsonl").exists()
+    assert archive.read(folder, archive.SAVINGS) == items
+    assert archive.read(folder, archive.FORECAST) == days
+    assert ex.state["archive"]["since"]
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert len(archive.read(folder, archive.LOG)) == 2  # no second backfill after a restart
