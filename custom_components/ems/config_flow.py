@@ -91,9 +91,13 @@ def format_settings(conf: dict[str, Any]) -> str:
         *EXECUTOR_KEYS,
         CONF_NOTIFY,
     ]
-    return "\n".join(
-        f"- `{key}`: {conf.get(key) if conf.get(key) not in (None, '') else '–'}" for key in keys
-    )
+
+    def value(key: str) -> Any:
+        if conf.get(key) not in (None, ""):
+            return conf.get(key)
+        return "Tibber (tibber.get_prices)" if key == CONF_PRICES else "–"
+
+    return "\n".join(f"- `{key}`: {value(key)}" for key in keys)
 
 
 def _entity(key: str) -> selector.EntitySelector:

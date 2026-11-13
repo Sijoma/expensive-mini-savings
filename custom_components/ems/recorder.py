@@ -18,24 +18,29 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_BATTERY_POWER,
-    CONF_DISCHARGE_MAX,
-    CONF_EMS_MODE,
-    CONF_FORCED,
     CONF_GRID_POWER,
     CONF_LOAD_POWER,
-    CONF_PRICE_NOW,
     CONF_PV_POWER,
-    CONF_SOC,
 )
-from .measurement import MeasurementWriter, action_from, as_number
+from .inputs import Inputs
+from .measurement import MeasurementWriter
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class MeasurementRecorder:
-    def __init__(self, hass: HomeAssistant, conf: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        conf: dict[str, Any],
+        inputs: Inputs,
+        price_now_ct: Callable[[], float | None],
+    ) -> None:
         self.hass = hass
         self.conf = conf
+        self.inputs = inputs
+        self.price_now_ct = price_now_ct
+        """Current price in ct/kWh (the coordinator: `preis_jetzt` entity or the price list)."""
         self.names = {
             entity_id: name
             for entity_id, name in (
@@ -49,11 +54,6 @@ class MeasurementRecorder:
         self.folder = Path(hass.config.path("ems", "messung"))
         self.writer = MeasurementWriter(dt_util.now())
         self._unsubscribe: list[Callable[[], None]] = []
-
-    def _value(self, key: str) -> Any:
-        entity_id = self.conf.get(key)
-        z = self.hass.states.get(entity_id) if entity_id else None
-        return z.state if z else None
 
     @callback
     def begin(self) -> None:
@@ -79,20 +79,12 @@ class MeasurementRecorder:
     @callback
     def _on_quarter_start(self) -> None:
         """At the start of a quarter hour: remember SoC and price."""
-        price = as_number(self._value(CONF_PRICE_NOW))
-        self.writer.extra_info(
-            soc_percent=as_number(self._value(CONF_SOC)),
-            price_ct=round(price * 100, 2) if price is not None else None,
-        )
+        self.writer.extra_info(soc_percent=self.inputs.soc(), price_ct=self.price_now_ct())
 
     @callback
     def _on_mid(self) -> None:
         """In the middle of the quarter hour: what is set at the inverter."""
-        self.writer.extra_info(
-            action=action_from(
-                self._value(CONF_EMS_MODE), self._value(CONF_FORCED), self._value(CONF_DISCHARGE_MAX)
-            )
-        )
+        self.writer.extra_info(action=self.inputs.inverter().action_code)
 
     @callback
     def _on_mid_time(self, _: Any) -> None:

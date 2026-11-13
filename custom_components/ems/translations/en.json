@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Planner inputs",
-        "description": "Prices, PV forecast, consumption and battery. Only prices and state of charge are required.",
+        "description": "Prices, PV forecast, consumption and battery. Only the state of charge is required; without a price entity the prices come from the Tibber integration.",
         "data": {
-          "preise": "Prices (attribute preise = [[ms, ct], …])",
+          "preise": "Prices (empty = Tibber integration, otherwise attribute preise = [[ms, ct], …])",
           "pv_prognose": "PV forecast (attribute forecast, 15 min)",
           "lastprofil": "Load profile (attribute profil, 24 values in W)",
           "soc": "Battery state of charge (usable range, %)",
@@ -27,7 +27,7 @@
           "pv_leistung": "PV power (W)",
           "akku_leistung": "Battery power (W, + discharging)",
           "netz_leistung": "Grid power (W, + import)",
-          "preis_jetzt": "Current price (€/kWh)",
+          "preis_jetzt": "Current price (€/kWh, empty = from the price list)",
           "ems_modus": "Inverter EMS mode",
           "erzwungen": "Forced charge/discharge",
           "entladen_max": "Max. discharge power"
@@ -57,9 +57,9 @@
     "step": {
       "init": {
         "title": "Planner inputs",
-        "description": "Prices, PV forecast, consumption and battery. Only prices and state of charge are required.",
+        "description": "Prices, PV forecast, consumption and battery. Only the state of charge is required; without a price entity the prices come from the Tibber integration.",
         "data": {
-          "preise": "Prices (attribute preise = [[ms, ct], …])",
+          "preise": "Prices (empty = Tibber integration, otherwise attribute preise = [[ms, ct], …])",
           "pv_prognose": "PV forecast (attribute forecast, 15 min)",
           "lastprofil": "Load profile (attribute profil, 24 values in W)",
           "soc": "Battery state of charge (usable range, %)",
@@ -81,7 +81,7 @@
           "pv_leistung": "PV power (W)",
           "akku_leistung": "Battery power (W, + discharging)",
           "netz_leistung": "Grid power (W, + import)",
-          "preis_jetzt": "Current price (€/kWh)",
+          "preis_jetzt": "Current price (€/kWh, empty = from the price list)",
           "ems_modus": "Inverter EMS mode",
           "erzwungen": "Forced charge/discharge",
           "entladen_max": "Max. discharge power"

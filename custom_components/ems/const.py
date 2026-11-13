@@ -40,6 +40,16 @@ CONF_WEAR_CT = "verschleiss_ct"
 CONF_GRID_KW = "netzladeleistung_kw"
 """Fixed values in configuration.yaml: then wear / grid charge power cannot be changed in the app."""
 
+# Limits of the planner settings (app, YAML schema, inverter command); defaults = core.model.Battery
+WEAR_CT_DEFAULT = 10.0
+WEAR_CT_MIN = 0
+WEAR_CT_MAX = 25
+GRID_KW_DEFAULT = 5.0
+GRID_KW_MIN = 1
+GRID_KW_MAX = 5.0
+"""Grid charge power: the inverter/battery limit (SBH100), not configurable."""
+SETTING_STEP = 0.5
+
 LEGACY_CONTROL_KEYS = (
     "modus",
     "freigabe",
@@ -69,9 +79,9 @@ DEFAULTS = {
     CONF_IMPORTED: "sensor.total_imported_energy",
     CONF_CONSUMED: "sensor.total_consumed_energy",
 }
-"""Entity IDs created by the mkaiser Sungrow Modbus integration. Prices and PV forecast depend on the setup
-and have no default. Load profile, wear, grid charge power and target are the integration's own entities
-unless set."""
+"""Entity IDs created by the mkaiser Sungrow Modbus integration. Prices come from the Tibber integration
+unless `preise` is set; the PV forecast depends on the setup and has no default. Load profile, wear,
+grid charge power and target are the integration's own entities unless set."""
 
 # Order of the fields in the setup dialog
 PLANNER_KEYS = (
@@ -98,8 +108,9 @@ MEASUREMENT_KEYS = (
 EXECUTOR_KEYS = (CONF_FORCED_POWER, CONF_CHARGED, CONF_CHARGED_PV, CONF_IMPORTED, CONF_CONSUMED)
 """Inverter setting and meters the executor uses (it switches via ems_modus, erzwungen, entladen_max)."""
 ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *EXECUTOR_KEYS)
-REQUIRED_KEYS = (CONF_PRICES, CONF_SOC)
-"""Without these the planner cannot run; all other inputs have fallbacks."""
+REQUIRED_KEYS = (CONF_SOC,)
+"""Without these the planner cannot run; all other inputs have fallbacks. Without `preise` the prices come
+from the Tibber integration (action tibber.get_prices)."""
 
 OPTION_DEFAULTS = {**DEFAULTS, CONF_FEED_IN_CT: 7.0, CONF_RECORDING: True, CONF_MEASUREMENT: True}
 

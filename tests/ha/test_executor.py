@@ -18,6 +18,7 @@ from test_integration import ENTITIES
 
 from custom_components.ems import archive
 from custom_components.ems import control as c
+from custom_components.ems.adapter import PlanBlock
 
 MODE = "select.ems_mode"
 FORCED = "select.battery_forced_charge_discharge"
@@ -83,18 +84,26 @@ async def ems(hass, set_states, tmp_path, inverter):
     return entry.runtime_data.executor
 
 
-def block_now(was: str, *, minutes_ago=5, length=60, kwh=0.0, spart=0.5, netz=1.0) -> dict:
+def block_now(was: str, *, minutes_ago=5, length=60, kwh=0.0, spart=0.5, netz=1.0) -> PlanBlock:
     von = int((dt_util.now() - timedelta(minutes=minutes_ago)).timestamp() * 1000)
-    return {"von": von, "bis": von + length * 60_000, "was": was, "kwh": kwh, "ct": 40.0, "spart": spart,
-            "netz_kwh": netz, "grund": "Test"}  # fmt: skip
+    return PlanBlock(
+        start_ms=von, end_ms=von + length * 60_000, code=was, kwh=kwh, ct=40.0, saves_eur=spart,
+        grid_kwh=netz, reason="Test",
+    )  # fmt: skip
 
 
 def with_plan(ex, monkeypatch, blocks):
     """A current plan with these blocks (the example inputs in the test HA are from an earlier day)."""
-    attribute = {"aktionen": blocks, "berechnet": dt_util.now().isoformat(), "slots": []}
-    monkeypatch.setattr(ex.coordinator, "data", SimpleNamespace(attribute=attribute))
-    monkeypatch.setattr(ex, "blocks", lambda: blocks)
-    monkeypatch.setattr(ex, "plan_fresh", lambda now: True)
+    attribute = {"aktionen": [b.as_attribute() for b in blocks], "slots": []}
+    plan = SimpleNamespace(attribute=attribute, blocks=blocks, computed=dt_util.now())
+
+    async def calculate():
+        return plan
+
+    # every replan "calculates" this plan; the test HA has no current prices for a real one
+    monkeypatch.setattr(ex.coordinator, "_async_update_data", calculate)
+    monkeypatch.setattr(ex.coordinator, "data", plan)
+    monkeypatch.setattr(ex.coordinator, "last_update_success", True)
 
 
 async def test_mode_select_entity(hass, ems):
@@ -253,7 +262,7 @@ async def test_settings_change_the_plan_inputs(hass, ems):
     entity = hass.data["entity_components"]["number"].get_entity("number.ems_akku_verschleiss")
     await entity.async_set_native_value(12.5)
     await hass.async_block_till_done()
-    assert ems.wear == 12.5
+    assert ems.settings.wear().value == 12.5
 
 
 async def test_takeover_of_the_yaml_executor(hass, set_states, tmp_path, inverter):
@@ -321,7 +330,7 @@ async def test_values_fixed_in_yaml_cannot_be_changed(hass, set_states, tmp_path
     assert state.state == "10.0" and state.attributes["fest_in_yaml"] is True
     with pytest.raises(HomeAssistantError):
         await ex.set_number("wear_ct", 15)
-    assert ex.wear == 10
+    assert ex.settings.wear().value == 10
 
 
 async def test_passive_while_the_yaml_executor_is_loaded(hass, ems, inverter, monkeypatch):
@@ -429,3 +438,51 @@ async def test_archive_is_backfilled_once_from_an_existing_store(
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert len(archive.read(folder, archive.LOG)) == 2  # no second backfill after a restart
+
+
+def test_switch_memory_is_derived_once_from_the_old_log():
+    """Up to 0.7 the log was the switching memory; the explicit fields start from it."""
+    from custom_components.ems.executor import _switch_memory_from_log
+
+    log = [
+        {"zeit": "2026-11-13T20:00:00+01:00", "art": "Fehler", "text": "Umschalten … nicht bestätigt"},
+        {
+            "zeit": "2026-11-13T08:00:00+01:00",
+            "art": "Manuell",
+            "text": "Wechselrichter steht auf „Anders (VPP / Stop (default) / 0 W)“ (nicht vom EMS).",
+        },
+    ]
+    memory = _switch_memory_from_log({"log": log})
+    assert memory["switch_failed"] is True
+    assert memory["foreign_reported"]["setting"] == "Anders (VPP / Stop (default) / 0 W)"
+    assert memory["foreign_reported"]["at"].startswith("2026-11-13T08:00")
+    assert _switch_memory_from_log({"log": log[1:]})["switch_failed"] is False
+    assert _switch_memory_from_log({}) == {"switch_failed": False, "foreign_reported": None}
+
+
+async def test_external_grid_charge_power_is_what_the_inverter_gets(
+    hass, set_states, tmp_path, inverter, monkeypatch
+):
+    """Planner and switching use the same grid charge power: an external entity wins over the app value,
+    and the own number shows it."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    hass.config.config_dir = str(tmp_path)
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    set_states(**{"sensor.battery_level": "45.0", "input_number.grid_charge_power": "3.0"})
+    conf = {k: v for k, v in ENTITIES.items() if k not in ("verschleiss", "soll", "lastprofil")}
+    assert await async_setup_component(
+        hass, "ems", {"ems": {**conf, "aufzeichnung": False, "messung": False}}
+    )
+    await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries("ems")
+    ex = entry.runtime_data.executor
+    inverter["install"]()
+    state = hass.states.get("number.ems_netzladeleistung")
+    assert state.state == "3.0" and state.attributes["extern"] == "input_number.grid_charge_power"
+    with pytest.raises(HomeAssistantError):
+        await ex.set_number("grid_charge_kw", 4.0)
+    with_plan(ex, monkeypatch, [block_now("l", kwh=4.0, spart=0.8)])
+    await ex.set_mode(c.AUTOMATIC)
+    await hass.async_block_till_done()
+    assert inverter["calls"][0] == (POWER, 3000)

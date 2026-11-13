@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Eingaben des Planers",
-        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig sind nur Preise und Akkustand.",
+        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig ist nur der Akkustand; ohne Preis-Entität kommen die Preise von der Tibber-Integration.",
         "data": {
-          "preise": "Preise (Attribut preise = [[ms, ct], …])",
+          "preise": "Preise (leer = Tibber-Integration, sonst Attribut preise = [[ms, ct], …])",
           "pv_prognose": "PV-Prognose (Attribut forecast, 15 min)",
           "lastprofil": "Lastprofil (Attribut profil, 24 Werte in W)",
           "soc": "Akkustand (nutzbarer Bereich, %)",
@@ -27,7 +27,7 @@
           "pv_leistung": "PV-Leistung (W)",
           "akku_leistung": "Akku-Leistung (W, + entladen)",
           "netz_leistung": "Netz-Leistung (W, + Bezug)",
-          "preis_jetzt": "Aktueller Preis (€/kWh)",
+          "preis_jetzt": "Aktueller Preis (€/kWh, leer = aus der Preisliste)",
           "ems_modus": "EMS-Modus des Wechselrichters",
           "erzwungen": "Erzwungenes Laden/Entladen",
           "entladen_max": "Max. Entladeleistung"
@@ -57,9 +57,9 @@
     "step": {
       "init": {
         "title": "Eingaben des Planers",
-        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig sind nur Preise und Akkustand.",
+        "description": "Preise, PV-Prognose, Verbrauch und Akku. Nötig ist nur der Akkustand; ohne Preis-Entität kommen die Preise von der Tibber-Integration.",
         "data": {
-          "preise": "Preise (Attribut preise = [[ms, ct], …])",
+          "preise": "Preise (leer = Tibber-Integration, sonst Attribut preise = [[ms, ct], …])",
           "pv_prognose": "PV-Prognose (Attribut forecast, 15 min)",
           "lastprofil": "Lastprofil (Attribut profil, 24 Werte in W)",
           "soc": "Akkustand (nutzbarer Bereich, %)",
@@ -81,7 +81,7 @@
           "pv_leistung": "PV-Leistung (W)",
           "akku_leistung": "Akku-Leistung (W, + entladen)",
           "netz_leistung": "Netz-Leistung (W, + Bezug)",
-          "preis_jetzt": "Aktueller Preis (€/kWh)",
+          "preis_jetzt": "Aktueller Preis (€/kWh, leer = aus der Preisliste)",
           "ems_modus": "EMS-Modus des Wechselrichters",
           "erzwungen": "Erzwungenes Laden/Entladen",
           "entladen_max": "Max. Entladeleistung"

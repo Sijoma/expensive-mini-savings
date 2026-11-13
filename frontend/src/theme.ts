@@ -27,6 +27,13 @@ export const ACTIONS: Record<
     color: "#8e44ad",
   },
   v: { name: "Anbieter steuert", sentence: "Ein Anbieter steuert den Akku", icon: "mdi:cloud-sync", color: "#b33b2e" },
+  x: { name: "Keine Daten", sentence: "Vom Wechselrichter kam nichts", icon: "mdi:help-circle-outline", color: "#c5cacd" },
+  a: {
+    name: "Anders eingestellt",
+    sentence: "Am Wechselrichter ist etwas anderes eingestellt",
+    icon: "mdi:hand-back-right",
+    color: "#c9a227",
+  },
 };
 
 export const NAME_TO_CODE: Record<string, string> = Object.fromEntries(

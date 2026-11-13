@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,78 +16,74 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .adapter import battery_from, build_slots, number, plan_attributes, running_action
+from .adapter import (
+    PlanBlock,
+    build_slots,
+    plan_attributes,
+    plan_blocks,
+    running_action,
+)
 from .const import (
-    CONF_CAPACITY,
     CONF_FEED_IN_CT,
-    CONF_GRID_CHARGE_POWER,
-    CONF_LOAD_PROFILE,
-    CONF_PRICES,
     CONF_PV,
     CONF_RECORDING,
-    CONF_RESERVE,
-    CONF_SOC,
-    CONF_TARGET,
-    CONF_WEAR,
 )
+from .control import PLAN_MAX_AGE_S
 from .core.explanation import Plan, create_plan
 from .core.model import Tariff
+from .inputs import Inputs
+from .prices import PriceSource
+from .settings import PlannerSettings
 
 _LOGGER = logging.getLogger(__name__)
+
+
+RunningSource = Callable[[], tuple[str | None, datetime | None]]
+"""What is applied at the battery right now and since when (the executor's target, or an external
+`soll` entity): a running hold is not toggled by the plan."""
 
 
 @dataclass(frozen=True)
 class Result:
     plan: Plan
     attribute: dict[str, Any]
+    blocks: list[PlanBlock]
+    computed: datetime
 
 
 class EmsCoordinator(DataUpdateCoordinator[Result]):
-    def __init__(self, hass: HomeAssistant, conf: dict[str, Any], entry: ConfigEntry) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        conf: dict[str, Any],
+        entry: ConfigEntry,
+        inputs: Inputs,
+        settings: PlannerSettings,
+        prices: PriceSource,
+        running: RunningSource,
+    ) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name="EMS", update_interval=None)
         self.conf = conf
+        self.inputs = inputs
+        self.settings = settings
+        self.price_source = prices
+        self._running = running
         self._last_recording: str | None = None
-        self.executor: Any = None
-        """The integration's executor; supplies wear, grid charge power, load profile and the running
-        action when no external entities are configured for them."""
-
-    def _state(self, key: str) -> Any:
-        entity_id = self.conf.get(key)
-        return self.hass.states.get(entity_id) if entity_id else None
-
-    def _attribute(self, key: str, attribute_name: str) -> Any:
-        z = self._state(key)
-        return z.attributes.get(attribute_name) if z else None
-
-    def _value(self, key: str) -> Any:
-        z = self._state(key)
-        return z.state if z else None
 
     async def _async_update_data(self) -> Result:
         now = dt_util.now()
-        ex = self.executor
-        profile = self._attribute(CONF_LOAD_PROFILE, "profil") if self.conf.get(CONF_LOAD_PROFILE) else None
-        if profile is None and ex is not None:
-            profile = ex.profile
-        prices, pv = self._attribute(CONF_PRICES, "preise"), self._attribute(CONF_PV, "forecast")
+        profile = self.settings.load_profile()
+        prices = await self.price_source.refresh(now)
+        pv = self.inputs.attribute(CONF_PV, "forecast")
         slots = build_slots(prices, pv, profile, now)
         if not slots:
             raise UpdateFailed("no prices from now on")
-        external = lambda key: self.conf.get(key) or ex is None  # noqa: E731
-        wear = self._value(CONF_WEAR) if external(CONF_WEAR) else ex.wear
-        grid_kw = self._value(CONF_GRID_CHARGE_POWER) if external(CONF_GRID_CHARGE_POWER) else ex.grid_kw
-        battery = battery_from(self._value(CONF_CAPACITY), self._value(CONF_RESERVE), wear, grid_kw)
-        soc = number(self._value(CONF_SOC), float("nan"))
-        if soc != soc:  # nan: SoC unknown
+        battery = self.settings.battery()
+        soc = self.inputs.soc()
+        if soc is None:
             raise UpdateFailed("battery state of charge unknown")
         e0 = soc / 100 * battery.capacity_kwh
-        if self.conf.get(CONF_TARGET) or ex is None:
-            target = self._state(CONF_TARGET)
-            running, since = running_action(
-                target.state if target else None, target.last_changed if target else None, now
-            )
-        else:
-            running, since = running_action(ex.target, ex.target_since, now)
+        running, since = running_action(*self._running(), now)
         tariff = Tariff(feed_in_ct=float(self.conf.get(CONF_FEED_IN_CT, 7.0)))
 
         t0 = time.perf_counter()
@@ -94,11 +91,22 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
             lambda: create_plan(slots, e0, battery, tariff, running=running, since=since)
         )
         runtime = (time.perf_counter() - t0) * 1000
-        attribute = plan_attributes(plan, battery, now, runtime)
+        blocks = plan_blocks(plan, battery)
+        attribute = plan_attributes(plan, battery, now, runtime, blocks)
 
         if self.conf.get(CONF_RECORDING):
             await self._record(now, soc, running, since, plan, attribute)
-        return Result(plan, attribute)
+        return Result(plan, attribute, blocks, now)
+
+    def latest_blocks(self) -> list[PlanBlock]:
+        """Blocks of the last plan, also when it is no longer fresh (offers, approvals, booking)."""
+        return list(self.data.blocks) if self.data else []
+
+    def plan_fresh(self, now: datetime) -> bool:
+        """The last calculation succeeded and is younger than PLAN_MAX_AGE_S (else: normal operation)."""
+        if not self.data or not self.last_update_success:
+            return False
+        return (now - self.data.computed).total_seconds() < PLAN_MAX_AGE_S
 
     async def _record(
         self, now: datetime, soc: float, running: Any, since: int, plan: Plan, attribute: dict[str, Any]

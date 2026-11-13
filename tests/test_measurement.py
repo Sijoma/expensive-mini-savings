@@ -93,7 +93,11 @@ def test_dst_change_has_100_quarters():
         ("Forced mode", "Stop (default)", "5900", "f"),
         ("Forced mode", "Forced discharge", "5900", "e"),
         ("VPP", "Stop (default)", "5900", "v"),
-        (None, None, "unavailable", "n"),
+        (None, None, "unavailable", "x"),
+        ("Self-consumption mode (default)", "Stop (default)", "unavailable", "x"),
+        # a low limit only counts as hold in self-consumption with Stop (as the executor sees it)
+        ("Self-consumption mode (default)", "Forced charge", "10.0", "a"),
+        ("External EMS mode", "Stop (default)", "10.0", "a"),
     ],
 )
 def test_action_from(mode, forced, boundary, expected):

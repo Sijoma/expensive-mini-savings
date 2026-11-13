@@ -38,7 +38,7 @@ class ApprovalPending(ExecutorEntity, BinarySensorEntity):
         would_hold = c.approval_end(offered, dt_util.now()) if offered else None
         return {
             # all runnable blocks of the next 24 h: this is what gets approved
-            "aktionen": offered,
+            "aktionen": [b.as_attribute() for b in offered],
             # how long an approval given now would hold
             "gilt_bis_bei_freigabe": (
                 dt_util.as_local(dt_util.utc_from_timestamp(would_hold / 1000)).isoformat()

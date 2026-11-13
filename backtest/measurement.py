@@ -27,7 +27,12 @@ class Measurement:
     grid_export_kwh: float
     soc_percent: float | None
     action: str
-    """n, h, l wie Aktion; f = alte Sperre (Forced/Stop); e = erzwungenes Entladen; v = VPP (Tibber)."""
+    """n, h, l like Action; f = old hold (Forced/Stop); e = forced discharge; v = VPP (Tibber);
+    x = no data (HA offline, values carried forward, or the inverter unreachable); a = other setting."""
+
+    @property
+    def no_data(self) -> bool:
+        return self.action == "x"
 
     @property
     def foreign_charged(self) -> bool:
@@ -92,3 +97,8 @@ def load_day(day: str) -> list[Measurement]:
 
 def all_days() -> list[str]:
     return sorted(p.stem for p in DATA.glob("*.json"))
+
+
+def has_gaps(day: str) -> bool:
+    """The day contains quarter hours without data (HA offline)."""
+    return any(m.no_data for m in load_day(day))

@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from backtest.measurement import Measurement, all_days, load_day
+from backtest.measurement import Measurement, all_days, has_gaps, load_day
 from ems.core.forecast import SPIKE_SHARE
 from ems.core.model import Action, Battery, Slot, Step, Tariff
 from ems.core.optimizer import plan_actions
@@ -164,7 +164,7 @@ def report(runs: list[Run], battery: Battery) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--days", nargs="*", help="YYYY-MM-DD (default: all stored, contiguous)")
+    ap.add_argument("--days", nargs="*", help="YYYY-MM-DD (default: all stored without gaps)")
     ap.add_argument("--share", type=float, default=SPIKE_SHARE, help="spike share in the forecast")
     ap.add_argument("--factor", type=float, default=LOAD_FACTOR, help="factor on the load profile")
     ap.add_argument("--wear", type=float, default=None, help="wear in ct per kWh taken from the battery")
@@ -172,7 +172,14 @@ def main() -> None:
     args = ap.parse_args()
     battery = Battery() if args.wear is None else Battery(wear_ct=args.wear)
     tariff = Tariff()
-    measurements = load(args.days or all_days())
+    days = args.days
+    if not days:
+        # days with HA-offline gaps would replay made-up consumption: leave them out
+        gaps = [d for d in all_days() if has_gaps(d)]
+        if gaps:
+            print("skipped (HA offline, no data):", ", ".join(gaps))
+        days = [d for d in all_days() if d not in gaps]
+    measurements = load(days)
     runs = [
         backtest(measurements, m, battery, tariff, args.share, args.factor) for m in ["none", *args.modes]
     ]

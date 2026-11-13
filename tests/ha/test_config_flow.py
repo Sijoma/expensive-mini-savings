@@ -64,7 +64,7 @@ async def test_yaml_is_imported_and_wins(hass, freezer, set_states, now, tmp_pat
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "yaml"
     settings = result["description_placeholders"]["settings"]
     assert "`einspeisung_ct`: 9" in settings and "`soc`: sensor.battery_level" in settings
-    assert "`preise`: –" in settings
+    assert "`preise`: Tibber (tibber.get_prices)" in settings
 
 
 async def test_yaml_change_updates_the_entry(hass, freezer, set_states, now, tmp_path):

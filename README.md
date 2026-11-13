@@ -88,7 +88,7 @@ Releases: bump `version` in `custom_components/ems/manifest.json` and push a tag
 ## Setup
 
 Either in the UI: **Settings → Devices & services → Add integration → Expensive Mini Savings**. The dialog
-asks for the input entities (only prices and state of charge are required) and the recording options;
+asks for the input entities (only the state of charge is required) and the recording options;
 change them later with *Configure*.
 
 Or in `configuration.yaml` (imported into the same entry on every start; YAML then takes precedence and
@@ -96,7 +96,7 @@ Or in `configuration.yaml` (imported into the same entry on every start; YAML th
 
 ```yaml
 ems:
-  preise: sensor.electricity_prices       # required
+  # preise: sensor.electricity_prices     # optional: without it the prices come from the Tibber integration
   pv_prognose: sensor.solar_forecast_power_now
   einspeisung_ct: 7                       # feed-in compensation in ct/kWh
   benachrichtigung: notify.my_phone   # push for approvals and alerts (optional)
@@ -107,12 +107,12 @@ ems:
 
 ### Inputs
 
-Only `preise` and `soc` are required; every other input falls back to the value in the last column.
+Only `soc` is required; every other input falls back to the value in the last column.
 Defaults exist only for the entities the mkaiser Sungrow integration creates.
 
 | Key | What | Format | Default entity | Without it |
 |---|---|---|---|---|
-| `preise` | prices per quarter hour, today and (from ~13:00) tomorrow; the plan reaches as far as the prices | attribute `preise` = `[[start in ms since epoch, ct/kWh], …]`, gross price incl. all fees | – | no plan |
+| `preise` | prices per quarter hour, today and (from ~13:00) tomorrow; the plan reaches as far as the prices | attribute `preise` = `[[start in ms since epoch, ct/kWh], …]`, gross price incl. all fees | – | prices from the Tibber integration (action `tibber.get_prices`, first home); without Tibber no plan |
 | `soc` | battery state of charge | state in %, **usable range** (0 % = the inverter's min SoC) | `sensor.battery_level` | no plan |
 | `pv_prognose` | PV forecast | attribute `forecast` = `[{"datetime": ISO time, "watts": W, "p10": W}, …]` per 15 min, DC (as Helios provides it); `p10` optional | – | no PV |
 | `lastprofil` | expected house consumption per hour of day | attribute `profil` = 24 values in W, index = local hour | – | 500 W flat |
@@ -123,13 +123,15 @@ Defaults exist only for the entities the mkaiser Sungrow integration creates.
 | `soll` | what your automation currently applies, so a running hold is not toggled | state `Eigenverbrauch`, `Entladung gesperrt` or `Laden aus dem Netz` | – | assumes normal |
 | `einspeisung_ct` | feed-in compensation | number in ct/kWh | – | 7 |
 
-[`examples/inputs.yaml`](examples/inputs.yaml) has template sensors for `preise` (from the Tibber integration)
-and `lastprofil` (learned from a total energy meter).
+With the Tibber integration set up, leave `preise` empty: the planner calls `tibber.get_prices` on every
+replan (Tibber keeps the prices and only fetches when today's or, from 13:00, tomorrow's are missing).
+For other providers, [`examples/inputs.yaml`](examples/inputs.yaml) shows a template sensor for `preise`
+(built from Tibber as an example) and one for `lastprofil` (learned from a total energy meter).
 
 Measurements (`messung: true`, written per quarter hour to `/config/ems/messung/`, used for backtests):
 `last_leistung` (`sensor.load_power`), `pv_leistung` (`sensor.total_dc_power`), `akku_leistung`
 (`sensor.battery_power`, + discharging), `netz_leistung` (`sensor.meter_active_power`, + import), all in W;
-`preis_jetzt` (current price, no default); `ems_modus`, `erzwungen`, `entladen_max` (inverter mode,
+`preis_jetzt` (current price in €/kWh; without it the quarter hour's price from `preise`/Tibber); `ems_modus`, `erzwungen`, `entladen_max` (inverter mode,
 forced mode, discharge limit; Sungrow defaults). `aufzeichnung: true` additionally stores the inputs and the
 plan once per hour in `/config/ems/aufzeichnung/`.
 

@@ -11,11 +11,13 @@ The data stays on HA as well (and is part of the HA backups).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).parent
-HA = HERE / "ha"
+HA = Path(os.environ.get("EMS_MIRROR", HERE / "ha"))
+"""Mirror of ha:/homeassistant/ems/; EMS_MIRROR points adopt() at another copy (the private ems-daten/ems)."""
 DATA = HERE / "data"
 
 

@@ -111,7 +111,7 @@ export class EmsHistoryView extends LitElement {
                 .label=${`Plan und Wirklichkeit am ${label}: ${s.same} von ${s.withPlan} Viertelstunden liefen wie geplant, Netzbezug ${num(s.importKwh, 1)} kWh.`}
               ></ems-chart>
               <div class="small muted" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px">
-                ${["n", "h", "l", "f", "e", "v"]
+                ${["n", "h", "l", "f", "e", "v", "x", "a"]
                   .filter((c) => rows.some((r) => r.aktion === c || r.plan_aktion === c))
                   .map(
                   (c) =>

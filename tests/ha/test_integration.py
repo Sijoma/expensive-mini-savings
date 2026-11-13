@@ -93,6 +93,28 @@ async def test_custom_entities_in_configuration(hass, freezer, set_states, now):
     assert hass.states.get(PLAN).attributes["slots"][0][4] >= 75
 
 
+async def test_measured_price_from_price_list_without_price_entity(
+    hass, freezer, set_states, ha_states, now, tmp_path
+):
+    """No `preis_jetzt`: the measurement takes the quarter hour's price from the price list."""
+    hass.config.config_dir = str(tmp_path)
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    freezer.move_to(now.replace(minute=30, second=0))  # 22:30:00
+    set_states(**{"sensor.battery_level": "40.0"})
+    conf = {k: v for k, v in ENTITIES.items() if k != "preis_jetzt"}
+    assert await async_setup_component(hass, "ems", {"ems": {**conf, "aufzeichnung": False}})
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=15))  # 22:45:00 boundary
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    slot = int(now.replace(minute=30, second=0).timestamp() * 1000)
+    expected = dict(ha_states["sensor.electricity_prices"]["attributes"]["preise"])[slot]
+    file_path = Path(tmp_path, "ems", "messung", "2026-11-08.jsonl")
+    (line,) = [json.loads(z) for z in file_path.read_text().splitlines()]
+    assert line["preis_ct"] == expected
+
+
 async def test_measurements_per_quarter(hass, freezer, set_states, now, tmp_path):
     """Power values change; at the quarter-hour boundary one line is written."""
     hass.config.config_dir = str(tmp_path)
@@ -134,3 +156,75 @@ async def test_measurements_per_quarter(hass, freezer, set_states, now, tmp_path
     assert line["preis_ct"] == 51.2
     assert line["aktion"] == "h"
     assert line["abgedeckt_s"] == 900
+
+
+def _tibber_response(ha_states, factor: float = 1.0) -> dict:
+    """The example prices in the format of tibber.get_prices (EUR/kWh, ISO start times)."""
+    entries = [
+        {"start_time": dt_util.utc_from_timestamp(ms / 1000).isoformat(), "price": ct / 100 * factor}
+        for ms, ct in ha_states["sensor.electricity_prices"]["attributes"]["preise"]
+    ]
+    return {"prices": {"Home": entries}}
+
+
+async def test_prices_from_tibber_without_price_entity(hass, freezer, set_states, ha_states, now, tmp_path):
+    """No `preise` configured: the planner asks the Tibber integration and plans with the same prices."""
+    from homeassistant.core import SupportsResponse
+
+    hass.config.config_dir = str(tmp_path)
+    freezer.move_to(now)
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    set_states(**{"sensor.battery_level": "45.0", "sensor.electricity_prices": None})
+    calls = []
+
+    async def get_prices(call):
+        calls.append(dict(call.data))
+        return _tibber_response(ha_states)
+
+    hass.services.async_register("tibber", "get_prices", get_prices, supports_response=SupportsResponse.ONLY)
+    conf = {k: v for k, v in ENTITIES.items() if k != "preise"}
+    assert await async_setup_component(hass, "ems", {"ems": {**conf, "aufzeichnung": False}})
+    await hass.async_block_till_done()
+
+    plan = hass.states.get(PLAN)
+    assert plan is not None and plan.state != "unavailable"
+    assert len(plan.attributes["slots"]) == 6 + 96
+    first = ha_states["sensor.electricity_prices"]["attributes"]["preise"]
+    assert plan.attributes["slots"][0][1] in [ct for _, ct in first]
+    assert calls[0]["start"].startswith("2026-11-08T00:00:00+01:00")
+    assert calls[0]["end"].startswith("2026-11-10T00:00:00+01:00")
+
+
+async def test_last_tibber_prices_kept_on_error(hass, freezer, set_states, ha_states, now, tmp_path):
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import HomeAssistantError
+
+    hass.config.config_dir = str(tmp_path)
+    freezer.move_to(now)
+    set_states(**{"sensor.battery_level": "45.0", "sensor.electricity_prices": None})
+    fail = []
+
+    async def get_prices(call):
+        if fail:
+            raise HomeAssistantError("timeout")
+        return _tibber_response(ha_states)
+
+    hass.services.async_register("tibber", "get_prices", get_prices, supports_response=SupportsResponse.ONLY)
+    conf = {k: v for k, v in ENTITIES.items() if k != "preise"}
+    assert await async_setup_component(hass, "ems", {"ems": {**conf, "aufzeichnung": False}})
+    await hass.async_block_till_done()
+    fail.append(True)
+    await hass.config_entries.async_entries("ems")[0].runtime_data.coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(PLAN).state != "unavailable"
+
+
+async def test_no_prices_without_entity_and_tibber(hass, freezer, set_states, now, tmp_path):
+    hass.config.config_dir = str(tmp_path)
+    freezer.move_to(now)
+    set_states(**{"sensor.electricity_prices": None})
+    conf = {k: v for k, v in ENTITIES.items() if k != "preise"}
+    assert await async_setup_component(hass, "ems", {"ems": conf})
+    await hass.async_block_till_done()
+    plan = hass.states.get(PLAN)
+    assert plan is None or plan.state == "unavailable"

@@ -13,7 +13,8 @@ German (data format):
 - akku_entladen_kwh, akku_geladen_kwh: from sensor.battery_power (+ discharging, − charging), DC side
 - netz_bezug_kwh, netz_einspeisung_kwh: from sensor.meter_active_power (+ import, − export)
 - soc_prozent and preis_ct at the start, aktion = what was really set at the inverter (see
-  measurement.action_from)
+  measurement.action_from), or "x" when HA recorded no power reading at all in the quarter hour (HA
+  offline): the values there are only the last ones carried forward
 """
 
 from __future__ import annotations
@@ -100,6 +101,9 @@ def action_at(history, t: datetime) -> str:
     )
 
 
+NO_DATA = "x"
+"""Action code of a quarter hour without any power reading (HA offline)."""
+
 NAMES = {
     "sensor.load_power": "last",
     "sensor.total_dc_power": "pv",
@@ -141,8 +145,15 @@ def export_day(day: date) -> dict:
     while writer.quarter.start + QUARTER <= cutoff:
         slots += writer.boundary(writer.quarter.start + QUARTER)
         extra_info(writer)
-    for s in slots:
+    readings = [0] * len(slots)
+    for t, _, _ in events:
+        i = int((t - start) / QUARTER)
+        if 0 <= i < len(readings):
+            readings[i] += 1
+    for s, n in zip(slots, readings, strict=True):
         s.pop("abgedeckt_s", None)
+        if n == 0:
+            s["aktion"] = NO_DATA
     return {
         "tag": day.isoformat(),
         "quelle": "HA history (raw) via the API, exported with backtest/export.py",

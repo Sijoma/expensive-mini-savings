@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from conftest import EXAMPLE, load_case
-from ems.adapter import battery_from, build_slots, plan_attributes, running_action
+from ems.adapter import build_slots, plan_attributes, running_action
 from ems.core.explanation import create_plan
 from ems.core.forecast import PV_EFFICIENCY, prepare
 from ems.core.model import Action, Battery, Tariff
@@ -66,19 +66,6 @@ def test_plannable_without_pv_forecast(ha_states):
     slots = build_slots(ha_states["sensor.electricity_prices"]["attributes"]["preise"], None, None, NOW)
     assert len(slots) == 102
     assert all(s.pv_kw == 0 for s in slots)
-
-
-def test_battery_from_states():
-    a = battery_from("10.13", "0.0", "8", "7")
-    assert a.capacity_kwh == 10.13 and a.soc_min == 0 and a.soc_max == 1 and a.wear_ct == 8
-    assert a.grid_charge_kw == 5.0  # at most 5 kW (limit of the HA number entity)
-    assert battery_from("unavailable", None, None, None) == Battery()
-
-
-def test_lower_bound_is_backup_reserve():
-    """battery_level already is the usable range: min SoC 5 % is 0 % there, the reserve applies."""
-    assert battery_from("10.13", "5.0", "10", "5").soc_min == 0.05
-    assert battery_from("10.13", "0.0", "10", "5").soc_min == 0.0
 
 
 @pytest.mark.parametrize(
@@ -137,3 +124,54 @@ def test_blocks_save_and_have_reasons():
     assert plan.reason_now.startswith("Strom kostet in dieser Zeit")
     assert all(b.calculation for b in plan.blocks)
     assert " ct" in plan.reason_now and "für " in plan.reason_now
+
+
+def test_prices_from_tibber():
+    from ems.adapter import prices_from_tibber
+
+    start = datetime(2026, 11, 8, 0, 0, tzinfo=TZ)
+    response = {
+        "prices": {
+            "Home": [
+                {"start_time": (start + timedelta(minutes=15)).isoformat(), "price": 0.3051},
+                {"start_time": start, "price": 0.2999},
+                {"start_time": "kaputt", "price": 0.5},
+                {"price": 0.5},
+            ],
+            "Other home": [{"start_time": start.isoformat(), "price": 9.0}],
+        }
+    }
+    ms = int(start.timestamp() * 1000)
+    assert prices_from_tibber(response) == [[ms, 29.99], [ms + 900_000, 30.51]]
+    assert prices_from_tibber(None) == []
+    assert prices_from_tibber({"prices": {}}) == []
+
+
+def test_price_at():
+    from ems.adapter import price_at
+
+    start = datetime(2026, 11, 8, 22, 0, tzinfo=TZ)
+    ms = int(start.timestamp() * 1000)
+    prices = [[ms, 30.0], [ms + 900_000, 31.5]]
+    assert price_at(prices, start + timedelta(minutes=14, seconds=59)) == 30.0
+    assert price_at(prices, start + timedelta(minutes=15)) == 31.5
+    assert price_at(prices, start + timedelta(minutes=30)) is None
+    assert price_at(None, start) is None
+
+
+def test_plan_blocks_are_the_blocks_of_the_attribute(ha_states):
+    """The executor and the sensor see the same blocks; the external keys and their order stay fixed."""
+    from ems.adapter import plan_blocks
+
+    battery = Battery()
+    plan = create_plan(slots_from(ha_states), 2.0, battery, Tariff())
+    blocks = plan_blocks(plan, battery)
+    attr = plan_attributes(plan, battery, NOW, 1.0)
+    assert blocks and attr["aktionen"] == [b.as_attribute() for b in blocks]
+    assert list(attr["aktionen"][0]) == [
+        "von", "bis", "was", "kwh", "ct", "wert_ct", "fuer_ct", "vorteil",
+        "spart", "netz_kwh", "kurz", "grund", "rechnung",
+    ]  # fmt: skip
+    for b in blocks:
+        assert b.end_ms - b.start_ms >= 900_000
+        assert (b.grid_kwh is None) == (b.code == "l") and (b.gain_ct is None) == (b.code == "h")

@@ -22,8 +22,8 @@ from .entity import ExecutorEntity
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinator: EmsCoordinator = entry.runtime_data
-    executor = coordinator.executor
+    coordinator: EmsCoordinator = entry.runtime_data.coordinator
+    executor = entry.runtime_data.executor
     async_add_entities(
         [
             PlanSensor(coordinator),
@@ -125,7 +125,7 @@ class TargetSensor(ExecutorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         ex = self.executor
         return {
-            "plan_aktuell": ex.plan_fresh(dt_util.now()),
+            "plan_aktuell": ex.coordinator.plan_fresh(dt_util.now()),
             "ist": ex.inverter(),
             "gesetzt": ex.state["set_by_ems"],
         }
@@ -213,9 +213,9 @@ class LoadProfileSensor(ExecutorEntity, SensorEntity):
 
     @property
     def native_value(self) -> int:
-        profile = self.executor.profile or c.START_PROFILE
+        profile = self.executor.settings.load_profile() or c.START_PROFILE
         return round(sum(profile) / len(profile))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"profil": self.executor.profile}
+        return {"profil": self.executor.settings.load_profile()}

@@ -3,7 +3,8 @@
 # Then point the integration at them: preise: sensor.electricity_prices, lastprofil: sensor.load_profile
 
 template:
-  # Prices per quarter hour from the Tibber integration, as [[ms since epoch, ct/kWh], ...].
+  # Prices per quarter hour as [[ms since epoch, ct/kWh], ...]. Not needed with the Tibber integration
+  # (leave `preise` empty, the planner asks Tibber itself); shown as a pattern for other providers.
   # Reloaded every hour; tomorrow's prices usually arrive around 13:00.
   - triggers:
       - trigger: time_pattern

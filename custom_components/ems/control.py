@@ -4,15 +4,27 @@ No HA import, so every rule is testable. This is the logic of the author's forme
 (sensor.ems_akku_soll, binary_sensor.ems_akku_freigabe_offen, the approval scripts, the booking in
 automation.ems_akku_steuern, the load profile template), moved into the integration unchanged.
 
-Blocks are the plan's `aktionen`: dicts with von/bis (ms), was (h/l), kwh, ct, spart (EUR), netz_kwh.
+Blocks are the plan's PlanBlocks (adapter.py): start/end in ms, code h/l, kwh, ct, saves_eur, grid_kwh.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
+
+from .adapter import PlanBlock
+from .inverter import (  # noqa: F401  (option names are part of control's interface)
+    FORCED_CHARGE,
+    FORCED_MODE,
+    FORCED_STOP,
+    HOLD_MAX_W,
+    SELF_CONSUMPTION,
+    InverterSetting,
+    classify,
+)
 
 NORMAL = "Eigenverbrauch"
 HOLD = "Entladung gesperrt"
@@ -69,29 +81,26 @@ class Approval:
         )
 
 
-def _long_enough(b: dict[str, Any]) -> bool:
-    return b["bis"] - b["von"] >= MIN_MS.get(b["was"], 0)
+def _long_enough(b: PlanBlock) -> bool:
+    return b.end_ms - b.start_ms >= MIN_MS.get(b.code, 0)
 
 
-def _worth_it(b: dict[str, Any]) -> bool:
-    return b.get("spart") is None or b["spart"] >= MIN_SAVING_EUR
+def _worth_it(b: PlanBlock) -> bool:
+    return b.saves_eur is None or b.saves_eur >= MIN_SAVING_EUR
 
 
-def charge_kwh_until(blocks: Iterable[dict[str, Any]], now_ms: int, until_ms: int) -> float:
-    """Grid charge planned from now until `until_ms` (blocks of at least 15 min)."""
-    return sum(
-        b.get("kwh") or 0.0
-        for b in blocks
-        if b["was"] == "l" and b["bis"] > now_ms and b["von"] < until_ms and _long_enough(b)
-    )
+def charge_kwh_until(blocks: Iterable[PlanBlock], now_ms: int, until_ms: int) -> float:
+    """Grid charge planned from now until `until_ms`, counting only offered blocks (next 24 h, long enough,
+    worth it): a block that cannot be approved yet must not make an approval look exceeded."""
+    return sum(b.kwh or 0.0 for b in offered(blocks, now_ms) if b.code == "l" and b.start_ms < until_ms)
 
 
-def _over_approved_kwh(blocks: Sequence[dict[str, Any]], now_ms: int, approval: Approval) -> bool:
+def _over_approved_kwh(blocks: Sequence[PlanBlock], now_ms: int, approval: Approval) -> bool:
     limit = approval.kwh * APPROVED_KWH_FACTOR + APPROVED_KWH_MARGIN
     return charge_kwh_until(blocks, now_ms, approval.until_ms) > limit
 
 
-def _approved(result: str, blocks: Sequence[dict[str, Any]], now_ms: int, approval: Approval) -> bool:
+def _approved(result: str, blocks: Sequence[PlanBlock], now_ms: int, approval: Approval) -> bool:
     if now_ms > approval.until_ms or CODE[result] not in approval.codes:
         return False
     return not (result == CHARGE and _over_approved_kwh(blocks, now_ms, approval))
@@ -99,7 +108,7 @@ def _approved(result: str, blocks: Sequence[dict[str, Any]], now_ms: int, approv
 
 def target(
     mode: str,
-    blocks: Sequence[dict[str, Any]],
+    blocks: Sequence[PlanBlock],
     now_ms: int,
     plan_fresh: bool,
     approval: Approval,
@@ -112,11 +121,11 @@ def target(
     if mode not in (WITH_APPROVAL, AUTOMATIC) or not plan_fresh:
         return result
     for b in blocks:
-        if b["was"] not in NAME or not b["von"] <= now_ms < b["bis"]:
+        if b.code not in NAME or not b.start_ms <= now_ms < b.end_ms:
             continue
-        running = NAME[b["was"]] == active
+        running = NAME[b.code] == active
         if (_long_enough(b) or running) and (_worth_it(b) or running):
-            result = NAME[b["was"]]
+            result = NAME[b.code]
     if mode == WITH_APPROVAL and result != NORMAL and not _approved(result, blocks, now_ms, approval):
         result = NORMAL
     if result == CHARGE and soc is None:
@@ -128,30 +137,52 @@ def target(
     return result
 
 
-def offered(blocks: Sequence[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
+def offered(blocks: Sequence[PlanBlock], now_ms: int) -> list[PlanBlock]:
     """Blocks of the next 24 h that would be run: these are approved or rejected together."""
     return [
         b
         for b in blocks
-        if b["was"] in NAME
-        and b["bis"] > now_ms
-        and b["von"] < now_ms + DAY_MS
+        if b.code in NAME
+        and b.end_ms > now_ms
+        and b.start_ms < now_ms + DAY_MS
         and _long_enough(b)
         and _worth_it(b)
     ]
 
 
-def pending(mode: str, blocks: Sequence[dict[str, Any]], now_ms: int, approval: Approval) -> bool:
+def pending(mode: str, blocks: Sequence[PlanBlock], now_ms: int, approval: Approval) -> bool:
     """In mode 'Mit Freigabe': is something waiting for approval?"""
     if mode != WITH_APPROVAL:
         return False
     waiting = [
         b
         for b in offered(blocks, now_ms)
-        if not (b["bis"] <= approval.until_ms and b["was"] in approval.codes)
-        and not b["von"] < approval.rejected_until_ms
+        if not (b.end_ms <= approval.until_ms and b.code in approval.codes)
+        and not b.start_ms < approval.rejected_until_ms
     ]
-    return bool(waiting) or _over_approved_kwh(blocks, now_ms, approval)
+    # more grid charge than approved only matters while an approval holds (not after it expired or a
+    # rejection ended it: a running block the user rejected must not stay pending)
+    over = now_ms <= approval.until_ms and _over_approved_kwh(blocks, now_ms, approval)
+    return bool(waiting) or over
+
+
+REQUEST_AFTER_S = 300
+"""Approval requests are sent when something has been pending this long ..."""
+REQUEST_HOURS = (7, 22.5)
+"""... and only between 07:00 and 22:30 (at 07:00 open requests come again)."""
+
+
+def should_request(now: datetime, pending_since: datetime | None, requested_at: datetime | None) -> bool:
+    """Send an approval request now? Once something has been pending for 5 min (if not already asked
+    since it became pending), and again at 07:00; never at night."""
+    if pending_since is None:
+        return False
+    hour = now.hour + now.minute / 60
+    if not REQUEST_HOURS[0] <= hour < REQUEST_HOURS[1]:
+        return False
+    morning = now.hour == REQUEST_HOURS[0] and now.minute == 0
+    waited = (now - pending_since).total_seconds() >= REQUEST_AFTER_S
+    return ((requested_at is None or requested_at < pending_since) and waited) or morning
 
 
 def next_approval_end(now: datetime) -> datetime:
@@ -160,32 +191,30 @@ def next_approval_end(now: datetime) -> datetime:
     return at if now < at else at + timedelta(days=1)
 
 
-def approval_end(items: Sequence[dict[str, Any]], now: datetime) -> int:
+def approval_end(items: Sequence[PlanBlock], now: datetime) -> int:
     """How long an approval of these blocks holds (ms): the next 14:00, at least to the end of the last."""
-    return max(max(b["bis"] for b in items), int(next_approval_end(now).timestamp() * 1000))
+    return max(max(b.end_ms for b in items), int(next_approval_end(now).timestamp() * 1000))
 
 
-def approve(blocks: Sequence[dict[str, Any]], now: datetime, approval: Approval) -> Approval:
+def approve(blocks: Sequence[PlanBlock], now: datetime, approval: Approval) -> Approval:
     """Approve everything offered now: until the next 14:00, at least to the end of the last block."""
     now_ms = int(now.timestamp() * 1000)
     items = offered(blocks, now_ms)
     if not items:
         return approval
     until = approval_end(items, now)
-    kwh = round(min(sum(b.get("kwh") or 0.0 for b in items if b["was"] == "l"), APPROVED_KWH_MAX), 1)
-    return Approval(
-        until_ms=until, codes=frozenset(b["was"] for b in items), kwh=kwh, rejected_until_ms=now_ms
-    )
+    kwh = round(min(sum(b.kwh or 0.0 for b in items if b.code == "l"), APPROVED_KWH_MAX), 1)
+    return Approval(until_ms=until, codes=frozenset(b.code for b in items), kwh=kwh, rejected_until_ms=now_ms)
 
 
-def reject(blocks: Sequence[dict[str, Any]], now: datetime, approval: Approval) -> Approval:
+def reject(blocks: Sequence[PlanBlock], now: datetime, approval: Approval) -> Approval:
     """Reject everything offered now (until its end); an earlier approval ends now."""
     now_ms = int(now.timestamp() * 1000)
     items = offered(blocks, now_ms)
     if not items:
         return approval
     # ends just before now: "after the approval time" must already hold in this millisecond
-    return replace(approval, until_ms=now_ms - 1, rejected_until_ms=max(b["bis"] for b in items))
+    return replace(approval, until_ms=now_ms - 1, rejected_until_ms=max(b.end_ms for b in items))
 
 
 def withdraw(now: datetime, approval: Approval) -> Approval:
@@ -195,32 +224,26 @@ def withdraw(now: datetime, approval: Approval) -> Approval:
 
 # ---- inverter ---------------------------------------------------------------------------------
 
-SELF_CONSUMPTION = "Self-consumption mode (default)"
-FORCED_MODE = "Forced mode"
-FORCED_STOP = "Stop (default)"
-FORCED_CHARGE = "Forced charge"
-"""Option names of the Sungrow Modbus integration
-(select.ems_mode, select.battery_forced_charge_discharge)."""
 HOLD_DISCHARGE_W = 10
 """Discharge limit for a hold: the minimum of the SBH battery; PV surplus keeps charging."""
 UNREACHABLE = "Nicht erreichbar"
 """The inverter's mode entities report no value (integration down, Modbus timeout)."""
-HOLD_MAX_W = 100
-"""A discharge limit up to this counts as hold."""
+STATE = {
+    InverterSetting.NORMAL: NORMAL,
+    InverterSetting.HOLD: HOLD,
+    InverterSetting.CHARGE: CHARGE,
+    InverterSetting.UNREACHABLE: UNREACHABLE,
+}
 
 
 def inverter_state(mode: str | None, forced: str | None, discharge_w: float | None) -> str:
     """What is set at the inverter, in the executor's terms (or 'Anders (…)' for anything else)."""
+    setting = classify(mode, forced, discharge_w)
+    if setting in STATE:
+        return STATE[setting]
     g = discharge_w if discharge_w is not None else -1
-    if mode == SELF_CONSUMPTION and forced == FORCED_STOP and g > HOLD_MAX_W:
-        return NORMAL
-    if mode == SELF_CONSUMPTION and forced == FORCED_STOP and g >= 0:
-        return HOLD
-    if mode == FORCED_MODE and forced == FORCED_CHARGE:
-        return CHARGE
-    if mode in (None, "unavailable", "unknown") or forced in (None, "unavailable", "unknown"):
-        return UNREACHABLE
-    return f"Anders ({mode} / {forced} / {int(g)} W)"
+    shown = int(g) if math.isfinite(g) else g  # an entity may report inf/nan; never fail on the text
+    return f"Anders ({mode} / {forced} / {shown} W)"
 
 
 # ---- booking ----------------------------------------------------------------------------------
@@ -242,16 +265,15 @@ class Counters:
         return self.charged - self.charged_pv
 
 
-def start_record(code: str, at_iso: str, counters: Counters, block: dict[str, Any] | None) -> dict[str, Any]:
+def start_record(code: str, at_iso: str, counters: Counters, block: PlanBlock | None) -> dict[str, Any]:
     """What is remembered when a block starts: meters and the plan's savings and quantity."""
-    block = block or {}
     return {
         "action": code,
         "start": at_iso,
         "grid_charged_kwh": round(counters.charged_from_grid, 3),
         "imported_kwh": round(counters.imported, 3),
-        "saves_eur": block.get("spart"),
-        "planned_kwh": block.get("kwh") if code == "l" else block.get("netz_kwh"),
+        "saves_eur": block.saves_eur if block else None,
+        "planned_kwh": (block.kwh if code == "l" else block.grid_kwh) if block else None,
     }
 
 

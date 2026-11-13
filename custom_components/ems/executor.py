@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -31,23 +32,19 @@ from homeassistant.util import dt as dt_util
 
 from . import archive
 from . import control as c
+from . import switching as sw
+from .adapter import PlanBlock
 from .const import (
-    CONF_CHARGED,
-    CONF_CHARGED_PV,
-    CONF_CONSUMED,
-    CONF_DISCHARGE_MAX,
-    CONF_EMS_MODE,
-    CONF_FORCED,
     CONF_FORCED_POWER,
-    CONF_GRID_KW,
-    CONF_IMPORTED,
     CONF_NOTIFY,
-    CONF_PRICE_NOW,
-    CONF_SOC,
-    CONF_WEAR_CT,
     DOMAIN,
+    GRID_KW_DEFAULT,
     SIGNAL_EXECUTOR,
+    WEAR_CT_DEFAULT,
 )
+from .inputs import Inputs
+from .measurement import as_number
+from .settings import NotChangeable, PlannerSettings
 
 if TYPE_CHECKING:
     from .coordinator import EmsCoordinator
@@ -59,34 +56,15 @@ STORE_KEY = f"{DOMAIN}.steuerung"
 TAKEOVER_FILE = ("ems", "uebernahme.json")
 CONFIRM_S = 60
 """Every command is checked after this long."""
-FOREIGN_QUIET_S = 300
-"""A setting that did not come from the EMS is reported once it has lasted this long ..."""
-FOREIGN_REPEAT_S = 12 * 3600
-"""... and the same one at most every 12 h."""
-REQUEST_AFTER_S = 300
-"""Approval requests are sent when something has been pending this long ..."""
-REQUEST_HOURS = (7, 22.5)
-"""... and only between 07:00 and 22:30 (at 07:00 open requests come again)."""
 LOG_MAX = 50
 FORECAST_DAYS = 100
 SAVINGS_MAX = 100
-WEAR_DEFAULT = 10.0
-GRID_KW_DEFAULT = 5.0
-GRID_KW_MAX = 5.0
 NOTIFY_TAG = "ems-akku-freigabe"
 ACTION_YES = "EMS_AKKU_JA"
 ACTION_NO = "EMS_AKKU_NEIN"
 APP_URL = "/ems"
 LEGACY_AUTOMATION = "automation.ems_akku_steuern"
 """The former YAML executor (up to 0.5)."""
-
-
-def _number(value: Any) -> float | None:
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return None
-    return v if v == v else None
 
 
 def _ms(t: datetime) -> int:
@@ -108,10 +86,24 @@ def empty_state() -> dict[str, Any]:
         "savings": {"value": 0.0, "items": [], "since": today},
         "forecast": {"value": 0.0, "last_day": None, "since": today, "days": []},
         "load_profile": {"values": list(c.START_PROFILE), "meter": None, "at": None},
-        "wear_ct": WEAR_DEFAULT,
+        "wear_ct": WEAR_CT_DEFAULT,
         "grid_charge_kw": GRID_KW_DEFAULT,
         "requested_at": None,
+        "switch_failed": False,
+        "foreign_reported": None,
     }
+
+
+def _switch_memory_from_log(stored: dict[str, Any]) -> dict[str, Any]:
+    """Up to 0.7 the log was the switching memory: a newest "Fehler" entry allowed a retry, the last
+    "Manuell" entry told which foreign setting was reported when. Derive the explicit fields once."""
+    log = stored.get("log") or []
+    memory: dict[str, Any] = {"switch_failed": bool(log) and log[0].get("art") == "Fehler"}
+    manual = next((e for e in log if e.get("art") == "Manuell"), None)
+    match = re.search(r"auf „(.+?)“", manual.get("text", "")) if manual else None
+    at = dt_util.parse_datetime(manual.get("zeit") or "") if manual else None
+    memory["foreign_reported"] = sw.ForeignReport(match[1], at).as_dict() if match and at else None
+    return memory
 
 
 def from_takeover(data: dict[str, Any]) -> dict[str, Any]:
@@ -131,12 +123,25 @@ def from_takeover(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class Executor:
-    def __init__(self, hass: HomeAssistant, conf: dict[str, Any], coordinator: EmsCoordinator) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        conf: dict[str, Any],
+        coordinator: EmsCoordinator,
+        inputs: Inputs,
+        settings: PlannerSettings,
+        price_now_ct: Callable[[], float | None],
+    ) -> None:
         self.hass = hass
         self.conf = conf
         self.coordinator = coordinator
+        self.inputs = inputs
+        self.settings = settings
+        self._price_now_ct = price_now_ct
+        """Current price in ct/kWh (PriceSource.now_ct)."""
         self.store: Store[dict[str, Any]] = Store(hass, STORE_VERSION, STORE_KEY)
         self.state = empty_state()
+        settings.bind(self.state)
         self.target = c.NORMAL
         self.target_since = dt_util.now()
         self.is_pending = False
@@ -154,7 +159,7 @@ class Executor:
     async def async_load(self) -> None:
         stored = await self.store.async_load()
         if stored:
-            self.state = {**empty_state(), **stored}
+            self.state = {**empty_state(), **_switch_memory_from_log(stored), **stored}
         else:
             path = Path(self.hass.config.path(*TAKEOVER_FILE))
             data = await self.hass.async_add_executor_job(_read_takeover, path)
@@ -169,6 +174,7 @@ class Executor:
         if self.state["archive"].get("since") == self._backfilled_at:
             await self.store.async_save(self.state)  # right away: a reload must not backfill twice
         self.target = self.state.get("set_by_ems") or c.NORMAL
+        self.settings.bind(self.state)
 
     def _archive(self, kind: str, *entries: dict[str, Any]) -> None:
         self.hass.async_add_executor_job(archive.append, self.archive_folder, kind, list(entries))
@@ -191,11 +197,6 @@ class Executor:
 
     # ---- inputs ----
 
-    def _value(self, key: str) -> Any:
-        entity_id = self.conf.get(key)
-        st = self.hass.states.get(entity_id) if entity_id else None
-        return st.state if st else None
-
     @property
     def mode(self) -> str:
         return self.state["mode"]
@@ -204,67 +205,15 @@ class Executor:
     def approval(self) -> c.Approval:
         return c.Approval.from_dict(self.state["approval"])
 
-    def fixed(self, key: str) -> float | None:
-        """A value set in configuration.yaml (verschleiss_ct / netzladeleistung_kw) wins over the app."""
-        conf_key = {"wear_ct": CONF_WEAR_CT, "grid_charge_kw": CONF_GRID_KW}[key]
-        return _number(self.conf.get(conf_key))
-
-    @property
-    def wear(self) -> float:
-        fixed = self.fixed("wear_ct")
-        return fixed if fixed is not None else float(self.state["wear_ct"])
-
-    @property
-    def grid_kw(self) -> float:
-        fixed = self.fixed("grid_charge_kw")
-        return fixed if fixed is not None else float(self.state["grid_charge_kw"])
-
-    @property
-    def profile(self) -> list[float]:
-        return list(self.state["load_profile"]["values"])
-
-    def blocks(self) -> list[dict[str, Any]]:
-        data = self.coordinator.data
-        return list(data.attribute.get("aktionen") or []) if data else []
-
-    def plan_fresh(self, now: datetime) -> bool:
-        data = self.coordinator.data
-        if not data or not self.coordinator.last_update_success:
-            return False
-        computed = dt_util.parse_datetime(data.attribute.get("berechnet") or "")
-        return computed is not None and (now - computed).total_seconds() < c.PLAN_MAX_AGE_S
-
     def inverter(self) -> str:
-        return c.inverter_state(
-            self._value(CONF_EMS_MODE), self._value(CONF_FORCED), _number(self._value(CONF_DISCHARGE_MAX))
-        )
-
-    def _inverter_entities(self) -> list[str]:
-        return [e for k in (CONF_EMS_MODE, CONF_FORCED, CONF_DISCHARGE_MAX) if (e := self.conf.get(k))]
-
-    def inverter_ready(self) -> bool:
-        return all(
-            self._value(k) not in (None, "unknown", "unavailable")
-            for k in (CONF_EMS_MODE, CONF_FORCED, CONF_DISCHARGE_MAX)
-        )
-
-    def counters(self) -> c.Counters:
-        return c.Counters(
-            charged=_number(self._value(CONF_CHARGED)) or 0.0,
-            charged_pv=_number(self._value(CONF_CHARGED_PV)) or 0.0,
-            imported=_number(self._value(CONF_IMPORTED)) or 0.0,
-        )
+        return self.inputs.inverter().state
 
     def price_ct(self) -> float | None:
-        price = _number(self._value(CONF_PRICE_NOW))
-        if price is not None:
-            return round(price * 100, 1)
-        data = self.coordinator.data
-        slots = data.attribute.get("slots") if data else None
-        return slots[0][1] if slots else None
+        price = self._price_now_ct()
+        return round(price, 1) if price is not None else None  # 0.1 ct is enough for the log
 
-    def offered(self) -> list[dict[str, Any]]:
-        return c.offered(self.blocks(), _ms(dt_util.now()))
+    def offered(self) -> list[PlanBlock]:
+        return c.offered(self.coordinator.latest_blocks(), _ms(dt_util.now()))
 
     # ---- start / stop ----
 
@@ -280,7 +229,7 @@ class Executor:
             h.bus.async_listen("mobile_app_notification_action", self._notification_action),
         ]
         self._unsub.append(
-            async_track_state_change_event(h, self._inverter_entities(), self._inverter_changed)
+            async_track_state_change_event(h, self.inputs.inverter_entities(), self._inverter_changed)
         )
         self.evaluate()
         self._remember_meter()
@@ -302,10 +251,10 @@ class Executor:
             # no plan yet since start: keep what runs (no switching back and forth during a restart)
             return
         now = dt_util.now()
-        blocks = self.blocks()
+        blocks = self.coordinator.latest_blocks()
         new = c.target(
-            self.mode, blocks, _ms(now), self.plan_fresh(now), self.approval, self.target,
-            _number(self._value(CONF_SOC)),
+            self.mode, blocks, _ms(now), self.coordinator.plan_fresh(now), self.approval, self.target,
+            self.inputs.soc(),
         )  # fmt: skip
         pending = c.pending(self.mode, blocks, _ms(now), self.approval)
         if pending and not self.is_pending:
@@ -352,10 +301,10 @@ class Executor:
 
     async def approve(self) -> bool:
         now = dt_util.now()
-        items = c.offered(self.blocks(), _ms(now))
+        items = c.offered(self.coordinator.latest_blocks(), _ms(now))
         if not items:
             return False
-        approval = c.approve(self.blocks(), now, self.approval)
+        approval = c.approve(self.coordinator.latest_blocks(), now, self.approval)
         self.state["approval"] = approval.as_dict()
         until = dt_util.as_local(dt_util.utc_from_timestamp(approval.until_ms / 1000))
         self.log("Freigabe", f"Freigegeben bis {until:%d.%m. %H:%M}: {_describe(items)}")
@@ -366,10 +315,10 @@ class Executor:
 
     async def reject(self) -> bool:
         now = dt_util.now()
-        items = c.offered(self.blocks(), _ms(now))
+        items = c.offered(self.coordinator.latest_blocks(), _ms(now))
         if not items:
             return False
-        approval = c.reject(self.blocks(), now, self.approval)
+        approval = c.reject(self.coordinator.latest_blocks(), now, self.approval)
         self.state["approval"] = approval.as_dict()
         until = dt_util.as_local(dt_util.utc_from_timestamp(approval.rejected_until_ms / 1000))
         self.log("Abgelehnt", f"Abgelehnt bis {until:%d.%m. %H:%M}")
@@ -385,14 +334,16 @@ class Executor:
         self.evaluate()
 
     async def set_number(self, key: str, value: float) -> None:
-        """key: wear_ct or grid_charge_kw."""
-        if self.fixed(key) is not None:
+        """key: wear_ct or grid_charge_kw (settings.WEAR / settings.GRID_CHARGE)."""
+        setting = self.settings.get(key)
+        if setting.external:
+            raise HomeAssistantError(f"Wird von {setting.external} bestimmt (ems: in configuration.yaml)")
+        try:
+            self.settings.set(key, value)
+        except NotChangeable as err:
             raise HomeAssistantError(
                 "In configuration.yaml festgelegt (ems: verschleiss_ct / netzladeleistung_kw)"
-            )
-        if key == "grid_charge_kw":
-            value = min(value, GRID_KW_MAX)
-        self.state[key] = value
+            ) from err
         self._changed()
         await self.coordinator.async_request_refresh()
 
@@ -419,24 +370,32 @@ class Executor:
     async def _apply(self, trigger: str) -> None:
         if self.yaml_executor_running():
             return
-        active = self.mode in (c.WITH_APPROVAL, c.AUTOMATIC)
-        goal = self.target if active else c.NORMAL
-        current = self.inverter()
-        set_by_ems = self.state["set_by_ems"]
-        if not self.inverter_ready() or goal == current:
+        reading = self.inputs.inverter()
+        situation = sw.Situation(
+            mode=self.mode,
+            target=self.target,
+            current=reading.state,
+            ready=reading.ready,
+            set_by_ems=self.state["set_by_ems"],
+            trigger=trigger,
+            now=dt_util.now(),
+            switch_failed=bool(self.state.get("switch_failed")),
+            foreign_reported=sw.ForeignReport.from_dict(self.state.get("foreign_reported")),
+            inverter_changed_at=reading.changed_at,
+        )
+        decision = sw.decide(situation)
+        if decision.kind is sw.Kind.NOTHING:
             return
-        # in "Nur planen" only take back the EMS's own setting, and only when the mode changes
-        if not active and not (trigger == "modus" and current == set_by_ems and current != c.NORMAL):
-            return
-        last = self.state["log"][0] if self.state["log"] else {}
-        from_ems = current in (set_by_ems, c.NORMAL) or last.get("art") == "Fehler"
-        if not from_ems:
-            await self._foreign(current, goal)
+        current, goal = decision.current, decision.goal
+        if decision.kind is sw.Kind.REPORT_FOREIGN:
+            await self._report_foreign(current, goal, situation.now)
             return
         await self._command(goal)
         if await self._confirmed(goal):
-            await self._switched(current, goal, active)
+            self.state["switch_failed"] = False
+            await self._switched(current, goal, self.mode in (c.WITH_APPROVAL, c.AUTOMATIC))
         else:
+            self.state["switch_failed"] = True
             now_state = self.inverter()
             self.log(
                 "Fehler",
@@ -451,21 +410,9 @@ class Executor:
                 tag="ems-akku-fehler",
             )
 
-    async def _foreign(self, current: str, goal: str) -> None:
-        """Something else is set at the inverter: do not override, report once."""
-        changed = [
-            st.last_changed
-            for k in (CONF_EMS_MODE, CONF_FORCED, CONF_DISCHARGE_MAX)
-            if (st := self.hass.states.get(self.conf.get(k) or ""))
-        ]
-        now = dt_util.now()
-        if changed and (now - max(changed)).total_seconds() <= FOREIGN_QUIET_S:
-            return
-        last = next((e for e in self.state["log"] if e.get("art") == "Manuell"), None)
-        if last and f"auf „{current}“" in last["text"]:
-            at = dt_util.parse_datetime(last["zeit"])
-            if at and (now - at).total_seconds() <= FOREIGN_REPEAT_S:
-                return
+    async def _report_foreign(self, current: str, goal: str, now: datetime) -> None:
+        """Something else is set at the inverter: do not override, report it (decide throttles)."""
+        self.state["foreign_reported"] = sw.ForeignReport(current, now).as_dict()
         self.log(
             "Manuell",
             f"Wechselrichter steht auf „{current}“ (nicht vom EMS). "
@@ -488,24 +435,17 @@ class Executor:
         await self.hass.services.async_call("number", "set_value", data, blocking=True)
 
     async def _command(self, goal: str) -> None:
-        discharge_e = self.conf[CONF_DISCHARGE_MAX]
-        if goal == c.CHARGE:
-            if power_e := self.conf.get(CONF_FORCED_POWER):
-                await self._set(power_e, int(min(self.grid_kw, GRID_KW_MAX) * 1000))
-            await self._select(CONF_FORCED, c.FORCED_CHARGE)
-            await self._select(CONF_EMS_MODE, c.FORCED_MODE)
-        elif goal == c.HOLD:
-            # first the discharge limit (10 W, the battery's minimum), then self-consumption:
-            # the battery does not discharge, PV surplus keeps charging it
-            await self._set(discharge_e, c.HOLD_DISCHARGE_W)
-            await self._select(CONF_FORCED, c.FORCED_STOP)
-            await self._select(CONF_EMS_MODE, c.SELF_CONSUMPTION)
-        else:
-            await self._select(CONF_FORCED, c.FORCED_STOP)
-            await self._select(CONF_EMS_MODE, c.SELF_CONSUMPTION)
-            # normal discharge limit = the upper bound of the number entity (SBH100: 5900 W)
-            st = self.hass.states.get(discharge_e)
-            await self._set(discharge_e, int(_number(st.attributes.get("max")) or 5900) if st else 5900)
+        steps = sw.commands_for(
+            goal,
+            grid_kw=self.settings.grid_charge().value,
+            power_configured=bool(self.conf.get(CONF_FORCED_POWER)),
+            normal_discharge_w=self.inputs.discharge_upper_w(),
+        )
+        for step in steps:
+            if step.kind == "select":
+                await self._select(step.key, step.value)
+            else:
+                await self._set(self.conf[step.key], step.value)
 
     async def _confirmed(self, goal: str) -> bool:
         """Wait until the inverter reports the goal (at most CONFIRM_S)."""
@@ -523,7 +463,7 @@ class Executor:
             if not done.done():
                 done.set_result(False)
 
-        unsub = async_track_state_change_event(self.hass, self._inverter_entities(), changed)
+        unsub = async_track_state_change_event(self.hass, self.inputs.inverter_entities(), changed)
         cancel = async_call_later(self.hass, CONFIRM_S, timeout)
         try:
             return await done
@@ -534,7 +474,7 @@ class Executor:
     async def _switched(self, current: str, goal: str, active: bool) -> None:
         now = dt_util.now()
         self.state["set_by_ems"] = goal
-        counters = self.counters()
+        counters = self.inputs.counters()
         record = self.state.get("running_block")
         if record and record.get("action") in ("h", "l"):
             kwh, eur = c.book(record, counters)
@@ -544,16 +484,21 @@ class Executor:
         if goal in (c.HOLD, c.CHARGE):
             code = c.CODE[goal]
             block = next(
-                (b for b in self.blocks() if b["was"] == code and b["von"] <= _ms(now) < b["bis"]), None
+                (
+                    b
+                    for b in self.coordinator.latest_blocks()
+                    if b.code == code and b.start_ms <= _ms(now) < b.end_ms
+                ),
+                None,
             )
             self.state["running_block"] = c.start_record(
                 code, now.isoformat(timespec="minutes"), counters, block
             )
         section = ""
         if block and goal != c.NORMAL:
-            von = dt_util.as_local(dt_util.utc_from_timestamp(block["von"] / 1000))
-            bis = dt_util.as_local(dt_util.utc_from_timestamp(block["bis"] / 1000))
-            section = f"{von:%H:%M}–{bis:%H:%M}, Ø {block['ct']} ct"
+            von = dt_util.as_local(dt_util.utc_from_timestamp(block.start_ms / 1000))
+            bis = dt_util.as_local(dt_util.utc_from_timestamp(block.end_ms / 1000))
+            section = f"{von:%H:%M}–{bis:%H:%M}, Ø {block.ct} ct"
         text = f"{current} → {goal}"
         if section:
             text += f" (Plan {section})"
@@ -588,15 +533,10 @@ class Executor:
     # ---- approval requests ----
 
     async def _maybe_request(self, now: datetime) -> None:
-        if self.yaml_executor_running() or not self.is_pending or not self.pending_since:
-            return
-        hour = now.hour + now.minute / 60
-        if not REQUEST_HOURS[0] <= hour < REQUEST_HOURS[1]:
+        if self.yaml_executor_running() or not self.is_pending:
             return
         asked = dt_util.parse_datetime(self.state.get("requested_at") or "")
-        morning = now.hour == REQUEST_HOURS[0] and now.minute == 0
-        waited = (now - self.pending_since).total_seconds() >= REQUEST_AFTER_S
-        if ((asked is None or asked < self.pending_since) and waited) or morning:
+        if c.should_request(now, self.pending_since, asked):
             await self.request()
 
     async def request(self) -> None:
@@ -606,14 +546,14 @@ class Executor:
         now = dt_util.now()
         lines = []
         for b in items[:3]:
-            von = dt_util.as_local(dt_util.utc_from_timestamp(b["von"] / 1000))
-            bis = dt_util.as_local(dt_util.utc_from_timestamp(b["bis"] / 1000))
+            von = dt_util.as_local(dt_util.utc_from_timestamp(b.start_ms / 1000))
+            bis = dt_util.as_local(dt_util.utc_from_timestamp(b.end_ms / 1000))
             day = "heute" if von.date() == now.date() else "morgen"
-            what = "🔒 Entladung gesperrt" if b["was"] == "h" else "🔌 Laden aus dem Netz"
-            kwh = f" {str(b.get('kwh')).replace('.', ',')} kWh" if b["was"] == "l" else ""
-            saves = _eur(b["spart"] or 0)
-            lines.append(f"{day} {von:%H:%M}–{bis:%H:%M} {what}{kwh} zu {round(b['ct'])} ct · spart {saves}")
-            lines.append(b.get("grund") or "")
+            what = "🔒 Entladung gesperrt" if b.code == "h" else "🔌 Laden aus dem Netz"
+            kwh = f" {str(b.kwh).replace('.', ',')} kWh" if b.code == "l" else ""
+            saves = _eur(b.saves_eur or 0)
+            lines.append(f"{day} {von:%H:%M}–{bis:%H:%M} {what}{kwh} zu {round(b.ct)} ct · spart {saves}")
+            lines.append(b.reason)
         if len(items) > 3:
             lines.append(f"+ {len(items) - 3} weitere in der EMS-App")
         self.state["requested_at"] = now.isoformat()
@@ -665,7 +605,7 @@ class Executor:
     # ---- log, forecast, load profile ----
 
     def log(self, kind: str, text: str) -> None:
-        soc = _number(self._value(CONF_SOC))
+        soc = self.inputs.soc()
         entry = {
             "zeit": dt_util.now().isoformat(timespec="seconds"),
             "art": kind,
@@ -681,7 +621,7 @@ class Executor:
     def _forecast(self, _now: datetime) -> None:
         """Daily at 14:05 (tomorrow's prices are there): add the plan's expected savings of the next 24 h."""
         data = self.coordinator.data
-        value = _number(data.attribute.get("ersparnis_24h")) if data else None
+        value = as_number(data.attribute.get("ersparnis_24h")) if data else None
         if value is None:
             return
         forecast = self.state["forecast"]
@@ -702,7 +642,7 @@ class Executor:
 
     def _remember_meter(self) -> None:
         profile = self.state["load_profile"]
-        profile["meter"] = _number(self._value(CONF_CONSUMED))
+        profile["meter"] = self.inputs.consumed_kwh()
         profile["at"] = dt_util.now().isoformat()
         self._save()
 
@@ -710,7 +650,7 @@ class Executor:
     def _learn(self, now: datetime) -> None:
         profile = self.state["load_profile"]
         before = dt_util.parse_datetime(profile.get("at") or "")
-        meter = _number(self._value(CONF_CONSUMED))
+        meter = self.inputs.consumed_kwh()
         before_local = dt_util.as_local(before) if before else None
         profile["values"] = c.learn_profile(profile["values"], profile.get("meter"), before_local, meter, now)
         profile["meter"] = meter
@@ -719,15 +659,15 @@ class Executor:
         self.hass.async_create_task(self.coordinator.async_request_refresh())
 
 
-def _describe(items: list[dict[str, Any]]) -> str:
+def _describe(items: list[PlanBlock]) -> str:
     parts = []
     for b in items:
-        von = dt_util.as_local(dt_util.utc_from_timestamp(b["von"] / 1000))
-        bis = dt_util.as_local(dt_util.utc_from_timestamp(b["bis"] / 1000))
-        kwh = str(b.get("kwh")).replace(".", ",")
-        what = "Entladung gesperrt" if b["was"] == "h" else f"Laden aus dem Netz, {kwh} kWh"
-        saves = _eur(b["spart"] or 0)
-        parts.append(f"{von:%d.%m. %H:%M}–{bis:%H:%M} {what} zu {round(b['ct'])} ct (spart {saves})")
+        von = dt_util.as_local(dt_util.utc_from_timestamp(b.start_ms / 1000))
+        bis = dt_util.as_local(dt_util.utc_from_timestamp(b.end_ms / 1000))
+        kwh = str(b.kwh).replace(".", ",")
+        what = "Entladung gesperrt" if b.code == "h" else f"Laden aus dem Netz, {kwh} kWh"
+        saves = _eur(b.saves_eur or 0)
+        parts.append(f"{von:%d.%m. %H:%M}–{bis:%H:%M} {what} zu {round(b.ct)} ct (spart {saves})")
     return "; ".join(parts)
 
 

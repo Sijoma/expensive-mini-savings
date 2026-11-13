@@ -11,6 +11,8 @@ YAML is imported into the config entry on every start and takes precedence over 
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
@@ -23,22 +25,32 @@ from homeassistant.helpers.typing import ConfigType
 from .config_flow import merged_config
 from .const import (
     CONF_FEED_IN_CT,
+    CONF_GRID_CHARGE_POWER,
     CONF_GRID_KW,
     CONF_MEASUREMENT,
     CONF_NOTIFY,
     CONF_PRICES,
     CONF_RECORDING,
+    CONF_TARGET,
     CONF_WEAR,
     CONF_WEAR_CT,
     DEFAULTS,
     DOMAIN,
     ENTITY_KEYS,
+    GRID_KW_MAX,
+    GRID_KW_MIN,
     LEGACY_CONTROL_KEYS,
+    WEAR_CT_MAX,
+    WEAR_CT_MIN,
 )
 from .coordinator import EmsCoordinator
 from .executor import Executor
+from .inputs import Inputs
 from .panel import async_register_panel, async_unregister_panel
+from .prices import PriceSource
 from .recorder import MeasurementRecorder
+from .runtime import EmsRuntime
+from .settings import PlannerSettings
 
 PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.BINARY_SENSOR, Platform.NUMBER, Platform.BUTTON]
 
@@ -69,8 +81,12 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_RECORDING, default=True): cv.boolean,
                 vol.Optional(CONF_MEASUREMENT, default=True): cv.boolean,
                 vol.Optional(CONF_NOTIFY): cv.string,
-                vol.Optional(CONF_WEAR_CT): vol.All(vol.Coerce(float), vol.Range(min=0, max=25)),
-                vol.Optional(CONF_GRID_KW): vol.All(vol.Coerce(float), vol.Range(min=1, max=5)),
+                vol.Optional(CONF_WEAR_CT): vol.All(
+                    vol.Coerce(float), vol.Range(min=WEAR_CT_MIN, max=WEAR_CT_MAX)
+                ),
+                vol.Optional(CONF_GRID_KW): vol.All(
+                    vol.Coerce(float), vol.Range(min=GRID_KW_MIN, max=GRID_KW_MAX)
+                ),
                 **{vol.Optional(k): cv.entity_id for k in LEGACY_CONTROL_KEYS},
             }
         )
@@ -111,11 +127,21 @@ def _migrate_entities(hass: HomeAssistant) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     conf = merged_config(entry)
     _migrate_entities(hass)
-    coordinator = EmsCoordinator(hass, conf, entry)
-    executor = Executor(hass, conf, coordinator)
-    await executor.async_load()
-    coordinator.executor = executor
-    entry.runtime_data = coordinator
+    inputs = Inputs(hass, conf)
+    settings = PlannerSettings(conf, inputs)
+    prices = PriceSource(hass, conf, inputs)
+
+    def running() -> tuple[str | None, datetime | None]:
+        """What runs at the battery: an external `soll` entity if configured, else the executor's target."""
+        if conf.get(CONF_TARGET):
+            st = inputs.state(CONF_TARGET)
+            return (st.state, st.last_changed) if st else (None, None)
+        return executor.target, executor.target_since
+
+    coordinator = EmsCoordinator(hass, conf, entry, inputs, settings, prices, running)
+    executor = Executor(hass, conf, coordinator, inputs, settings, prices.now_ct)
+    await executor.async_load()  # binds the stored settings before the first plan
+    entry.runtime_data = EmsRuntime(conf, coordinator, executor, settings)
     _register_services(hass)
 
     @callback
@@ -131,13 +157,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if old is None or new is None or old.state != new.state or old.attributes != new.attributes:
             replan()
 
-    watched = [e for e in (conf.get(CONF_PRICES), conf.get(CONF_WEAR)) if e]
+    watched = [e for e in (conf.get(CONF_PRICES), conf.get(CONF_WEAR), conf.get(CONF_GRID_CHARGE_POWER)) if e]
     entry.async_on_unload(async_track_state_change_event(hass, watched, input_changed))
-
-    if conf.get(CONF_MEASUREMENT):
-        measurement = MeasurementRecorder(hass, conf)
-        measurement.begin()
-        entry.async_on_unload(measurement.stop)
 
     @callback
     def start_executor(*_: object) -> None:
@@ -150,6 +171,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     else:
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, replan))
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_executor))
+
+    if conf.get(CONF_MEASUREMENT):
+        # after the first plan when HA is already running (reload), so the first quarter hour has a price;
+        # on an HA start the first plan only comes at EVENT_HOMEASSISTANT_STARTED (then no price with Tibber)
+        measurement = MeasurementRecorder(hass, conf, inputs, prices.now_ct)
+        measurement.begin()
+        entry.async_on_unload(measurement.stop)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_register_panel(hass)

@@ -11,36 +11,28 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
+from .inverter import classify
+
 QUARTER = timedelta(minutes=15)
 
 POWERS = ("last", "pv", "akku", "netz")
 """load, pv (DC), battery (+ discharging / − charging), grid (+ import / − export); all in W."""
 
 
-def as_number(value: Any) -> float | None:
+def as_number(value: Any, default: float | None = None) -> float | None:
+    """The value as a number; `default` if missing, not a number or nan (the one parser of the EMS)."""
     try:
         v = float(value)
     except (TypeError, ValueError):
-        return None
-    return v if v == v else None  # nan
+        return default
+    return v if v == v else default
 
 
 def action_from(mode: str | None, forced: str | None, discharge_max: Any) -> str:
-    """What is actually set at the inverter:
-    n normal, h discharge power ≈ 0, l grid charging, f Forced/Stop (old-style hold),
-    e forced discharge, v VPP (a provider such as Tibber controls the battery)."""
-    if mode == "VPP":
-        return "v"
-    if mode == "Forced mode" and forced == "Forced charge":
-        return "l"
-    if mode == "Forced mode" and forced == "Stop (default)":
-        return "f"
-    if mode == "Forced mode" and forced == "Forced discharge":
-        return "e"
-    boundary = as_number(discharge_max)
-    if boundary is not None and boundary <= 100:
-        return "h"
-    return "n"
+    """What is actually set at the inverter, as action code (inverter.InverterSetting): n normal, h hold,
+    l grid charging, f Forced/Stop (old-style hold), e forced discharge, v VPP (a provider controls the
+    battery), x no value from the inverter, a any other combination."""
+    return classify(mode, forced, as_number(discharge_max)).value
 
 
 def quarter_start(t: datetime) -> datetime:
