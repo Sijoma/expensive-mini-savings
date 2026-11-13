@@ -83,3 +83,13 @@ def test_load_profile_external_attribute_or_learned(hass):
     hass.states.async_set("sensor.profile", "500", {"profil": [500.0] * 24})
     conf = {"lastprofil": "sensor.profile"}
     assert settings(hass, conf, stored=learned).load_profile() == [500.0] * 24
+
+
+def test_own_entities_are_not_external_inputs(hass):
+    """Left over from the former YAML executor: the inputs point at the integration's own entities."""
+    hass.states.async_set("number.ems_akku_verschleiss", "20")
+    hass.states.async_set("sensor.ems_lastprofil", "500", {"profil": [500.0] * 24})
+    conf = {CONF_WEAR: "number.ems_akku_verschleiss", "lastprofil": "sensor.ems_lastprofil"}
+    s = settings(hass, conf, stored={WEAR: 12.0, "load_profile": {"values": [400.0] * 24}})
+    assert s.wear().value == 12.0 and s.wear().external is None
+    assert s.load_profile() == [400.0] * 24  # learned, not the sensor's own attribute

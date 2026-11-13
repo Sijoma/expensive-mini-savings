@@ -26,6 +26,7 @@ from .const import (
     WEAR_CT_DEFAULT,
     WEAR_CT_MAX,
     WEAR_CT_MIN,
+    external_input,
 )
 from .core.model import Battery
 from .inputs import Inputs
@@ -93,7 +94,7 @@ class PlannerSettings:
 
     def get(self, key: str) -> Setting:
         lim = LIMITS[key]
-        external = self.conf.get(lim.entity_key) or None
+        external = external_input(self.conf, lim.entity_key)
         value = self.inputs.number(lim.entity_key) if external else None
         if value is None:
             value = self._own(key)
@@ -116,7 +117,11 @@ class PlannerSettings:
 
     def load_profile(self) -> list[float]:
         """Expected consumption per hour of day (W): the external attribute if present, else learned."""
-        external = self.inputs.attribute(CONF_LOAD_PROFILE, "profil")
+        external = (
+            self.inputs.attribute(CONF_LOAD_PROFILE, "profil")
+            if external_input(self.conf, CONF_LOAD_PROFILE)
+            else None
+        )
         if external is not None:
             return external
         return list((self._stored.get("load_profile") or {}).get("values") or [])

@@ -165,9 +165,13 @@ class EmsConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
-        """configuration.yaml → config entry. Runs on every start and updates the entry."""
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured(updates=dict(import_data))
+        """configuration.yaml → config entry. Runs on every start and replaces the entry's data with the
+        YAML, so keys removed from the YAML disappear (up to 0.8.0 they were merged and stayed)."""
+        entry = await self.async_set_unique_id(DOMAIN)
+        if entry is not None:
+            if dict(entry.data) != dict(import_data):
+                self.hass.config_entries.async_update_entry(entry, data=dict(import_data))
+            return self.async_abort(reason="already_configured")
         return self.async_create_entry(title=TITLE, data=dict(import_data))
 
     @staticmethod

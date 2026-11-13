@@ -67,6 +67,21 @@ async def test_yaml_is_imported_and_wins(hass, freezer, set_states, now, tmp_pat
     assert "`preise`: Tibber (tibber.get_prices)" in settings
 
 
+async def test_keys_removed_from_the_yaml_disappear_from_the_entry(hass, freezer, set_states, now, tmp_path):
+    """Up to 0.8.0 the import merged the YAML into the entry: removed keys (e.g. the former YAML executor's
+    input entities) stayed and kept being used."""
+    await _prepare(hass, freezer, set_states, now, tmp_path)
+    old = {"einspeisung_ct": 7.0, "lastprofil": "sensor.ems_lastprofil", "preise": "sensor.gone"}
+    MockConfigEntry(domain="ems", unique_id="ems", source=config_entries.SOURCE_IMPORT, data=old).add_to_hass(
+        hass
+    )
+    assert await async_setup_component(hass, "ems", {"ems": {"einspeisung_ct": 7.0, "aufzeichnung": False}})
+    await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries("ems")
+    assert "lastprofil" not in entry.data and "preise" not in entry.data
+    assert "preise" not in entry.runtime_data.conf
+
+
 async def test_yaml_change_updates_the_entry(hass, freezer, set_states, now, tmp_path):
     await _prepare(hass, freezer, set_states, now, tmp_path)
     MockConfigEntry(

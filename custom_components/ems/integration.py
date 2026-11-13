@@ -42,6 +42,7 @@ from .const import (
     LEGACY_CONTROL_KEYS,
     WEAR_CT_MAX,
     WEAR_CT_MIN,
+    external_input,
 )
 from .coordinator import EmsCoordinator
 from .executor import Executor
@@ -133,7 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     def running() -> tuple[str | None, datetime | None]:
         """What runs at the battery: an external `soll` entity if configured, else the executor's target."""
-        if conf.get(CONF_TARGET):
+        if external_input(conf, CONF_TARGET):
             st = inputs.state(CONF_TARGET)
             return (st.state, st.last_changed) if st else (None, None)
         return executor.target, executor.target_since

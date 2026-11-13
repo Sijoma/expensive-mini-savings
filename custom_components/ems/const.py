@@ -116,3 +116,21 @@ OPTION_DEFAULTS = {**DEFAULTS, CONF_FEED_IN_CT: 7.0, CONF_RECORDING: True, CONF_
 
 SIGNAL_EXECUTOR = f"{DOMAIN}_executor_update"
 """Dispatcher signal: the executor's state changed (entities update)."""
+
+OWN_INPUT_ENTITIES = frozenset(
+    {
+        "number.ems_akku_verschleiss",
+        "number.ems_netzladeleistung",
+        "sensor.ems_lastprofil",
+        "sensor.ems_akku_soll",
+    }
+)
+"""The integration's own entities for the inputs verschleiss, netzladeleistung, lastprofil and soll.
+Configured as an "external" input (left over from the former YAML executor) they would read the
+integration's own output back."""
+
+
+def external_input(conf: dict, key: str) -> str | None:
+    """The entity configured for an input, unless it is the integration's own entity for it."""
+    entity_id = conf.get(key) or None
+    return None if entity_id in OWN_INPUT_ENTITIES else entity_id
