@@ -55,7 +55,8 @@ class Quarter:
     grid_import: float = 0.0
     grid_export: float = 0.0
     extra_info: dict[str, Any] = field(default_factory=dict)
-    """soc_percent, price_ct (at the start), action (middle)."""
+    """soc_percent, price_ct (at the start), action and plan_action/plan_soc_percent (middle): what was set
+    at the inverter and what the plan valid at that moment wanted."""
 
     def add(self, duration_s: float, w: dict[str, float]) -> None:
         h = duration_s / 3600
@@ -85,6 +86,8 @@ class Quarter:
             "netz_einspeisung_kwh": round(self.grid_export, 4),
             "soc_prozent": self.extra_info.get("soc_percent"),
             "aktion": self.extra_info.get("action", "n"),
+            "plan_aktion": self.extra_info.get("plan_action"),
+            "plan_soc_prozent": self.extra_info.get("plan_soc_percent"),
             "abgedeckt_s": round((end - self.since).total_seconds()),
         }
 

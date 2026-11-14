@@ -72,6 +72,15 @@ def test_extra_info_applies_to_current_quarter():
     assert w["soc_prozent"] is None and w["aktion"] == "n"
 
 
+def test_plan_of_the_quarter_is_written_with_the_measurement():
+    m = MeasurementWriter(T0)
+    m.extra_info(action="n", plan_action="h", plan_soc_percent=45)
+    (v,) = m.boundary(T0 + timedelta(minutes=15))
+    assert (v["aktion"], v["plan_aktion"], v["plan_soc_prozent"]) == ("n", "h", 45)
+    (w,) = m.boundary(T0 + timedelta(minutes=30))
+    assert w["plan_aktion"] is None and w["plan_soc_prozent"] is None
+
+
 def test_dst_change_has_100_quarters():
     """2026-10-25 has 25 hours. Counting is in UTC, output in local time."""
     start = datetime(2026, 10, 25, 0, 0, tzinfo=TZ)

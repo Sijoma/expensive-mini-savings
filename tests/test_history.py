@@ -91,3 +91,23 @@ def test_day_combines_measurement_and_plan(tmp_path):
 def test_day_without_data(tmp_path):
     result = history.day(tmp_path, date(2026, 11, 10))
     assert result["viertelstunden"] == [] and history.available_days(tmp_path) == []
+
+
+def test_plan_recorded_with_the_measurement_wins_over_the_hourly_recording(tmp_path):
+    """The plan is recomputed every 15 min: at 00:15 a new plan held the battery although the hourly
+    recording from 00:00 said normal. The measurement knows the plan valid at that moment."""
+    write(
+        tmp_path / "ems" / "messung" / "2026-11-10.jsonl",
+        [
+            {**measured("00:00", 30, 50, "n", 0.1), "plan_aktion": "n", "plan_soc_prozent": 50},
+            {**measured("00:15", 30, 50, "h", 0.1), "plan_aktion": "h", "plan_soc_prozent": 50},
+            measured("00:30", 30, 50, "h", 0.1),  # recorded before the plan was stored with it
+        ],
+    )
+    write(
+        tmp_path / "ems" / "aufzeichnung" / "2026-11-10.jsonl",
+        [recording("2026-11-10T00:00:10+01:00", T0, "nnnn")],
+    )
+    rows = history.day(tmp_path, date(2026, 11, 10))["viertelstunden"]
+    assert [(r["aktion"], r["plan_aktion"]) for r in rows] == [("n", "n"), ("h", "h"), ("h", "n")]
+    assert rows[1]["plan_soc"] == 50 and rows[2]["plan_soc"] == 52

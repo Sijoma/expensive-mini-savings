@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,8 @@ from .settings import PlannerSettings
 
 _LOGGER = logging.getLogger(__name__)
 
+
+QUARTER = timedelta(minutes=15)
 
 RunningSource = Callable[[], tuple[str | None, datetime | None]]
 """What is applied at the battery right now and since when (the executor's target, or an external
@@ -101,6 +103,18 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
     def latest_blocks(self) -> list[PlanBlock]:
         """Blocks of the last plan, also when it is no longer fresh (offers, approvals, booking)."""
         return list(self.data.blocks) if self.data else []
+
+    def planned(self, now: datetime) -> tuple[str | None, float | None]:
+        """Action code and planned SoC (%, end of the quarter) of the fresh plan for the quarter hour at
+        `now`; (None, None) without a fresh plan (the executor then runs normal operation)."""
+        if not self.plan_fresh(now):
+            return None, None
+        for slot, action, row in zip(
+            self.data.plan.slots, self.data.plan.actions, self.data.attribute["slots"], strict=True
+        ):
+            if slot.start <= now < slot.start + QUARTER:
+                return action.value, row[4]
+        return None, None
 
     def plan_fresh(self, now: datetime) -> bool:
         """The last calculation succeeded and is younger than PLAN_MAX_AGE_S (else: normal operation)."""

@@ -168,8 +168,10 @@ export class EmsHistoryView extends LitElement {
               </div>
             </div>
             <p class="muted small">
-              „Geplant“ ist, was der Plan kurz vor der jeweiligen Viertelstunde vorgesehen hatte. Abweichungen sind
-              normal, wenn du anders entschieden hast (Freigabe, Modus) oder etwas anderes den Akku gesteuert hat.
+              „Geplant“ ist, was der gerade gültige Plan in der Mitte der Viertelstunde vorsah. Der Plan wird jede
+              Viertelstunde neu gerechnet, das EMS schaltet nach dem neuesten. Abweichungen sind normal, wenn du anders
+              entschieden hast (Freigabe, Modus), der Wechselrichter nicht erreichbar war oder etwas anderes den Akku
+              gesteuert hat. Bei älteren Tagen kann „Geplant“ ungenau sein, dort wurde der Plan nur stündlich gespeichert.
             </p>
           </div>`
         : nothing}

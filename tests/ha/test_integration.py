@@ -156,6 +156,10 @@ async def test_measurements_per_quarter(hass, freezer, set_states, now, tmp_path
     assert line["preis_ct"] == 51.2
     assert line["aktion"] == "h"
     assert line["abgedeckt_s"] == 900
+    # the plan valid in the middle of the quarter hour (22:37:30), straight from the plan entity
+    slot = int(now.replace(minute=30, second=0).timestamp() * 1000)
+    row = next(r for r in hass.states.get(PLAN).attributes["slots"] if r[0] == slot)
+    assert (line["plan_aktion"], line["plan_soc_prozent"]) == (row[5], row[4])
 
 
 def _tibber_response(ha_states, factor: float = 1.0) -> dict:

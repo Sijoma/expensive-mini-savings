@@ -176,7 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if conf.get(CONF_MEASUREMENT):
         # after the first plan when HA is already running (reload), so the first quarter hour has a price;
         # on an HA start the first plan only comes at EVENT_HOMEASSISTANT_STARTED (then no price with Tibber)
-        measurement = MeasurementRecorder(hass, conf, inputs, prices.now_ct)
+        measurement = MeasurementRecorder(hass, conf, inputs, prices.now_ct, coordinator.planned)
         measurement.begin()
         entry.async_on_unload(measurement.stop)
 

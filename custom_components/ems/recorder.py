@@ -35,12 +35,15 @@ class MeasurementRecorder:
         conf: dict[str, Any],
         inputs: Inputs,
         price_now_ct: Callable[[], float | None],
+        planned: Callable[[Any], tuple[str | None, float | None]],
     ) -> None:
         self.hass = hass
         self.conf = conf
         self.inputs = inputs
         self.price_now_ct = price_now_ct
         """Current price in ct/kWh (the coordinator: `preis_jetzt` entity or the price list)."""
+        self.planned = planned
+        """Action and SoC the current plan wants for the quarter hour at a time (the coordinator)."""
         self.names = {
             entity_id: name
             for entity_id, name in (
@@ -83,8 +86,12 @@ class MeasurementRecorder:
 
     @callback
     def _on_mid(self) -> None:
-        """In the middle of the quarter hour: what is set at the inverter."""
-        self.writer.extra_info(action=self.inputs.inverter().action_code)
+        """In the middle of the quarter hour: what is set at the inverter and what the plan valid now wants
+        (the plan is recomputed every 15 min, the hourly recording alone would show older plans)."""
+        plan_action, plan_soc = self.planned(dt_util.now())
+        self.writer.extra_info(
+            action=self.inputs.inverter().action_code, plan_action=plan_action, plan_soc_percent=plan_soc
+        )
 
     @callback
     def _on_mid_time(self, _: Any) -> None:

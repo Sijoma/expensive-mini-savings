@@ -63,7 +63,12 @@ def day(config_dir: Path, day_: date) -> dict[str, Any]:
             start = _ms(m["start"])
         except (KeyError, TypeError, ValueError):
             continue
-        plan_action, plan_soc = planned.get(start, (None, None))
+        if m.get("plan_aktion") is not None:
+            # recorded with the measurement: the plan valid in the middle of the quarter hour
+            plan_action, plan_soc = m["plan_aktion"], m.get("plan_soc_prozent")
+        else:
+            # older measurements: the hourly plan recording (misses the replans every 15 min)
+            plan_action, plan_soc = planned.get(start, (None, None))
         rows.append(
             {
                 "start": start,
