@@ -42,7 +42,7 @@ The name is honest: on a 10 kWh battery with a dynamic tariff the savings are re
 5. **Heat pump** (`core/heat_pump.py`). PV boost only with surplus that the battery plan would export.
 
 6. **Executor** (`control.py` rules, `executor.py`). Runs the plan at the inverter depending on the mode, asks
-   for approval by push, books savings, keeps a log and learns the load profile. The heat pump is planned
+   for approval by push, measures the savings, keeps a log and learns the load profile. The heat pump is planned
    only; switching it is left to a separate SG Ready automation.
 
 ## Layout
@@ -59,9 +59,10 @@ custom_components/ems/        the Home Assistant integration (copy this folder t
   adapter.py                  HA states → slots, plan → attributes (no HA import, testable)
   integration.py              setup from configuration.yaml, triggers
   coordinator.py              reads inputs, plans in a worker thread, hourly recording of inputs
-  recorder.py, measurement.py measurements per quarter hour → /config/ems/messung/
+  recorder.py, measurement.py measurements per quarter hour → savings ledger, /config/ems/messung/
+  shadow.py                   savings ledger: measured against the same battery without control
   sensor.py                   plan, value of one kWh, heat pump plan; executor sensors
-  control.py, executor.py     executor: rules (no HA) and the part that switches, asks, books, logs
+  control.py, executor.py     executor: rules (no HA) and the part that switches, asks, measures, logs
   select.py, binary_sensor.py, number.py, button.py   mode, approval pending, settings, approve/reject
   panel.py, history.py        the app: sidebar panel, websocket commands, plan against reality
 backtest/                     not part of the integration
@@ -128,7 +129,8 @@ replan (Tibber keeps the prices and only fetches when today's or, from 13:00, to
 For other providers, [`examples/inputs.yaml`](examples/inputs.yaml) shows a template sensor for `preise`
 (built from Tibber as an example) and one for `lastprofil` (learned from a total energy meter).
 
-Measurements (`messung: true`, written per quarter hour to `/config/ems/messung/`, used for backtests):
+Measurements (always taken per quarter hour for the savings; `messung: true` also writes them to
+`/config/ems/messung/` for backtests):
 `last_leistung` (`sensor.load_power`), `pv_leistung` (`sensor.total_dc_power`), `akku_leistung`
 (`sensor.battery_power`, + discharging), `netz_leistung` (`sensor.meter_active_power`, + import), all in W;
 `preis_jetzt` (current price in €/kWh; without it the quarter hour's price from `preise`/Tibber); `ems_modus`, `erzwungen`, `entladen_max` (inverter mode,
@@ -152,8 +154,8 @@ in the store are written once.
 | `sensor.ems_akku_soll` | what runs at the battery now (after mode and approval) | `ist` (inverter), `gesetzt` (last set by the EMS), `plan_aktuell` |
 | `binary_sensor.ems_akku_freigabe_offen` | something waits for approval | `aktionen`, `freigegeben_bis`, `freigegeben`, `freigegeben_kwh` |
 | `button.ems_akku_freigeben`, `button.ems_akku_ablehnen` | approve / reject the next 24 h | services `ems.freigeben`, `ems.ablehnen`, `ems.freigabe_zuruecknehmen` |
-| `sensor.ems_ersparnis` | measured savings, EUR (`total`) | `aktionen` (booked blocks), `seit` |
-| `sensor.ems_prognose_ersparnis` | the plan's expected savings, added daily at 14:05 | `letzter_tag` |
+| `sensor.ems_ersparnis` | savings measured against the same battery without control, EUR (`total`, can fall) | `kasse` (money saved so far), `im_akku` (value of the `akku_mehr_kwh` the battery holds more than without control), `tage` (finished days), `aktionen` (blocks that ran), `seit` |
+| `sensor.ems_prognose_ersparnis` | what the plan expected to save per calendar day, noted the afternoon before | `tage` (per day), `letzter_tag` |
 | `sensor.ems_protokoll` | last decision | `eintraege` (newest first) |
 | `sensor.ems_lastprofil` | mean consumption, W | `profil` (24 values, learned hourly from the energy meter) |
 | `number.ems_akku_verschleiss`, `number.ems_netzladeleistung` | wear (ct/kWh), grid charge power (kW) | `fest_in_yaml` |
@@ -162,7 +164,16 @@ in the store are written once.
 keeps charging); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
 with the discharge limit back at its maximum. Every command is checked after 60 s. Blocks are run from 30 min
 (hold) / 15 min (grid charge) and 5 ct savings, grid charging stops at 98 %, a plan older than 30 min means
-normal operation. A finished block books the plan's savings for it, scaled by the measured quantity.
+normal operation.
+
+**How savings are measured** (`shadow.py`). Next to the real battery the integration keeps a shadow battery:
+the same battery without control. Every quarter hour it compares what the energy cost with either one, from
+the measured load and PV. In quarter hours with a hold or a grid charge the real side is what the meters
+say, so forecast errors and everything the model does not know count. Energy the real battery holds more
+than the shadow (after a night charge) is valued with the planner's own cost-to-go until it is used. The
+plan's expectation for the next calendar day is noted every afternoon in the same terms, so promise and
+measurement compare day by day. Finished blocks are listed with what the plan expected of each; those
+amounts overlap (a charge and the hold after it share one gain) and are not the savings.
 
 ### App
 
@@ -172,7 +183,7 @@ install or configure; it updates with the integration.
 | Tab | Shows |
 |---|---|
 | Plan | what the battery does now and why, how long it lasts, approvals, mode; one chart with price (colored by level), the planned actions of battery and heat pump as strips, SoC with and without plan, PV and load; planned actions with savings and reasons |
-| Ersparnis | measured savings today / week / month, per day against the forecast, booked actions |
+| Ersparnis | measured savings today / week / month, per day against the plan's promise, the blocks that ran |
 | Verlauf | plan against reality per day: planned and executed action, measured SoC, grid import and its cost |
 | Protokoll | decisions with who acted; logbook of mode, target, inverter and approvals (inverter changes without an EMS action shortly before are marked as external, e.g. VPP); state of every entity |
 | Einstellungen | wear and grid charge power, load profile, how the planner calculates, the configuration |

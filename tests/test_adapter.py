@@ -89,7 +89,7 @@ def test_attributes_keep_the_interface(ha_states):
     plan = create_plan(slots_from(ha_states), 2.0, battery, Tariff())
     attr = plan_attributes(plan, battery, NOW, 12.3)
     old = {"von", "bis", "was", "kwh", "ct", "spart", "netz_kwh", "kurz", "fuer_ct", "vorteil"}
-    assert {"ersparnis_24h", "netzladen_kwh", "berechnet", "bis"} <= attr.keys()
+    assert {"ersparnis_eur", "netzladen_kwh", "berechnet", "bis"} <= attr.keys()
     assert attr["aktionen"]
     for a in attr["aktionen"]:
         assert old <= a.keys()

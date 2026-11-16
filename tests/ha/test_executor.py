@@ -95,7 +95,12 @@ def block_now(was: str, *, minutes_ago=5, length=60, kwh=0.0, spart=0.5, netz=1.
 def with_plan(ex, monkeypatch, blocks):
     """A current plan with these blocks (the example inputs in the test HA are from an earlier day)."""
     attribute = {"aktionen": [b.as_attribute() for b in blocks], "slots": []}
-    plan = SimpleNamespace(attribute=attribute, blocks=blocks, computed=dt_util.now())
+    plan = SimpleNamespace(
+        attribute=attribute,
+        blocks=blocks,
+        computed=dt_util.now(),
+        plan=SimpleNamespace(slots=[], actions=[]),  # the measurement asks what the plan wants now
+    )
 
     async def calculate():
         return plan
@@ -157,8 +162,9 @@ async def test_automatic_hold_switches_in_order_and_books(hass, ems, inverter, m
     assert inverter["calls"] == [(FORCED, c.FORCED_STOP), (MODE, c.SELF_CONSUMPTION), (DISCHARGE, 5900)]
     savings = ems.state["savings"]
     assert savings["items"][0]["was"] == "h" and savings["items"][0]["kwh"] == 1.0
-    assert savings["value"] == 0.3  # 0.6 € × 1 kWh measured / 2 kWh planned
-    assert float(hass.states.get("sensor.ems_ersparnis").state) == 0.3
+    # what the plan expected of the block: 0.6 € × 1 kWh measured / 2 kWh planned. A note, not the savings
+    assert savings["items"][0]["betrag"] == 0.3
+    assert float(hass.states.get("sensor.ems_ersparnis").state) == 0
 
 
 async def test_grid_charge_sets_power_and_forced_charge(hass, ems, inverter, monkeypatch):
@@ -297,7 +303,7 @@ async def test_takeover_of_the_yaml_executor(hass, set_states, tmp_path, inverte
     await hass.async_block_till_done()
 
     assert hass.states.get("select.ems_modus_akku").state == c.WITH_APPROVAL
-    assert float(hass.states.get("sensor.ems_ersparnis").state) == 1.021
+    assert float(hass.states.get("sensor.ems_ersparnis").state) == 0  # measured anew by the ledger
     assert registry.async_get("sensor.ems_ersparnis").platform == "ems"  # same ID: statistics continue
     assert registry.async_get("sensor.ems_plan_akku").unique_id == "ems_neu_plan_akku"
     assert hass.states.get("sensor.ems_lastprofil").state == "500"
@@ -363,26 +369,68 @@ async def test_no_switching_before_the_first_plan(hass, ems, inverter, monkeypat
     assert ems.target == c.HOLD and inverter["calls"] == []
 
 
-async def test_forecast_is_recorded_daily_and_can_be_reset(hass, ems, monkeypatch):
-    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(attribute={"ersparnis_24h": 1.5}))
+async def test_forecast_is_noted_once_per_day_and_can_be_reset(hass, ems, monkeypatch):
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(promise=None))
+    ems._forecast(dt_util.now())  # the plan does not cover tomorrow yet
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(promise={"tag": "2026-11-17", "eur": 1.5}))
     ems._forecast(dt_util.now())
+    ems._forecast(dt_util.now())  # the hourly retry: tomorrow is already noted
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(promise={"tag": "2026-11-18", "eur": -0.2}))
     ems._forecast(dt_util.now())
     await hass.async_block_till_done()
     state = hass.states.get("sensor.ems_prognose_ersparnis")
-    assert float(state.state) == 3.0 and len(state.attributes["tage"]) == 2
+    assert float(state.state) == 1.3
+    assert [(d["tag"], d["wert"]) for d in state.attributes["tage"]] == [
+        ("2026-11-17", 1.5),
+        ("2026-11-18", -0.2),
+    ]
     await hass.services.async_call("ems", "prognose_zuruecksetzen", blocking=True)
     await hass.async_block_till_done()
     state = hass.states.get("sensor.ems_prognose_ersparnis")
     assert float(state.state) == 0 and state.attributes["tage"] == []
     assert state.attributes["last_reset"] is not None
-    assert ems.state["log"][0]["text"].startswith("Prognose zurückgesetzt (vorher 3,00 €)")
+    assert ems.state["log"][0]["text"].startswith("Prognose zurückgesetzt (vorher 1,30 €)")
+
+
+def quarter(start: str, action: str, soc: float, **values) -> dict:
+    """A measured night quarter hour (0.4 kW load, 30 ct) as the recorder hands it to the executor."""
+    return {
+        "start": start, "preis_ct": 30.0, "pv_kw": 0.0, "last_kw": 0.4, "bezug_brutto_kwh": 0.1,
+        "ueberschuss_brutto_kwh": 0.0, "akku_entladen_kwh": 0.0, "akku_geladen_kwh": 0.0,
+        "netz_bezug_kwh": 0.1, "netz_einspeisung_kwh": 0.0, "soc_prozent": soc, "aktion": action,
+        "abgedeckt_s": 900, **values,
+    }  # fmt: skip
+
+
+async def test_savings_are_measured_against_the_battery_without_control(hass, ems, monkeypatch):
+    """A hold at night: the house pays the grid now (and the inverter's 25 Wh on top), the battery keeps
+    what the shadow battery uses up. Money is down, the content is the position; midnight closes the day."""
+    ems.quarter_finished([quarter("2026-11-16T23:30:00+01:00", "h", 45.0, netz_bezug_kwh=0.125)])
+    ems.quarter_finished([quarter("2026-11-16T23:45:00+01:00", "h", 45.0, netz_bezug_kwh=0.125)])
+    await hass.async_block_till_done()
+    ledger = ems.state["ledger"]
+    # per quarter hour: 0.125 kWh at 30 ct from the grid; the shadow takes 0.1 kWh from its battery
+    # (0.1 / 0.975 + 98 W standby = 0.127 kWh at 10 ct wear)
+    assert ledger["cash_ct"] == pytest.approx(2 * (1.27 - 3.75), abs=0.02)
+    assert ledger["diff_kwh"] == pytest.approx(2 * 0.127, abs=0.005)
+    # the planner values the position on its next run
+    with_plan(ems, monkeypatch, [])
+    ems.coordinator.data.position_ct = 9.0
+    ems._plan_updated()
+    ems.quarter_finished([quarter("2026-11-17T00:00:00+01:00", "n", 45.0)])
+    await hass.async_block_till_done()
+    state = hass.states.get("sensor.ems_ersparnis")
+    assert state.attributes["tage"] == [{"tag": "2026-11-16", "wert": 0.04}]  # −4.96 ct + 9 ct
+    assert state.attributes["im_akku"] == 0.09 and state.attributes["akku_mehr_kwh"] == 0.25
+    assert float(state.state) == pytest.approx(state.attributes["kasse"] + 0.09, abs=0.0011)
+    assert state.attributes["last_reset"] is not None
 
 
 async def test_archive_keeps_everything_the_store_trims(hass, ems, monkeypatch, tmp_path):
     for i in range(60):
         ems.log("Hinweis", f"Eintrag {i}")
     ems._book({"action": "h", "start": "2026-11-11T04:30+01:00"}, 2.3, 0.52, dt_util.now())
-    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(attribute={"ersparnis_24h": 0.3}))
+    monkeypatch.setattr(ems.coordinator, "data", SimpleNamespace(promise={"tag": "2026-11-17", "eur": 0.3}))
     ems._forecast(dt_util.now())
     await hass.services.async_call("ems", "prognose_zuruecksetzen", blocking=True)
     await hass.async_block_till_done()
@@ -429,7 +477,14 @@ async def test_archive_is_backfilled_once_from_an_existing_store(
     (entry,) = hass.config_entries.async_entries("ems")
     ex = entry.runtime_data.executor
     folder = tmp_path / "ems"
-    assert [e["text"] for e in archive.read(folder, archive.LOG)] == ["eins", "zwei"]
+    texts = [e["text"] for e in archive.read(folder, archive.LOG)]
+    assert texts[:2] == ["eins", "zwei"]
+    # a store from before the ledger: the savings start at zero, measured against the shadow battery, and
+    # the forecast starts anew with them (the old one promised something else)
+    assert len(texts) == 3 and texts[2].startswith("Ersparnis wird neu gemessen") and "1,30 €" in texts[2]
+    assert ex.state["ledger"]["cash_ct"] == 0 and ex.state["forecast"]["days"] == []
+    assert float(hass.states.get("sensor.ems_ersparnis").state) == 0
+    assert hass.states.get("sensor.ems_ersparnis").attributes["aktionen"] == items
     assert (folder / "protokoll" / "2026-10.jsonl").exists()
     assert (folder / "protokoll" / "2026-11.jsonl").exists()
     assert archive.read(folder, archive.SAVINGS) == items
@@ -437,7 +492,7 @@ async def test_archive_is_backfilled_once_from_an_existing_store(
     assert ex.state["archive"]["since"]
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    assert len(archive.read(folder, archive.LOG)) == 2  # no second backfill after a restart
+    assert len(archive.read(folder, archive.LOG)) == 3  # no second backfill, no second start of the ledger
 
 
 def test_switch_memory_is_derived_once_from_the_old_log():

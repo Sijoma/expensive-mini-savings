@@ -1,10 +1,9 @@
-"""Plan explanation: grid charging with a full battery is shown as hold; 24 h savings forecast."""
+"""Plan explanation: grid charging with a full battery is shown as hold."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from custom_components.ems.adapter import savings_24h
 from custom_components.ems.core.explanation import create_plan, hold_when_full
 from custom_components.ems.core.model import Action, Battery, Slot, Tariff
 from custom_components.ems.core.optimizer import plan_with_value
@@ -61,14 +60,6 @@ def test_short_full_stretch_stays_grid_charge():
 def test_nothing_to_change_without_grid_charge():
     actions = [Action.NORMAL] * len(SLOTS)
     assert hold_when_full(SLOTS, 5.0, actions, BATTERY, TARIFF) == actions
-
-
-def test_24h_savings_count_what_stays_in_the_battery():
-    """A night charge whose energy is used after the 24 h window must not look like a loss."""
-    slots = night([35.0] * 16 + [80.0] * 80 + [80.0] * 16)  # 28 h
-    plan = create_plan(slots, 0.0, BATTERY, TARIFF)
-    assert plan.saves_ct > 0
-    assert savings_24h(plan, BATTERY) > 0
 
 
 def test_ct_comparison_keeps_a_visible_difference():

@@ -340,24 +340,36 @@ describe("plan texts", () => {
 });
 
 describe("promise check", () => {
-  const H = 3_600_000;
-  const at = (ms: number) => new Date(ms).toISOString();
-  const t0 = Date.parse("2026-11-11T14:05:00+01:00");
-  const booked = (startMs: number, betrag: number, was = "l") => ({
-    start: at(startMs), ende: at(startMs + H), was, kwh: 1, betrag,
+  const promise = (tag: string, wert: number) => ({ zeit: `${tag}T14:05+01:00`, tag, wert });
+  it("compares only days that are over and have both values", () => {
+    const promises = [promise("2026-11-17", 1.5), promise("2026-11-18", 2.0), promise("2026-11-19", 0.7)];
+    const measured = [
+      { tag: "2026-11-16", wert: 0.4 }, // no promise for that day
+      { tag: "2026-11-17", wert: 1.2 },
+      { tag: "2026-11-18", wert: 1.9 },
+    ];
+    const check = promiseCheck(promises, measured)!;
+    expect(check).toMatchObject({ days: 2, from: "2026-11-17", to: "2026-11-18" });
+    expect(check.promised).toBeCloseTo(3.5);
+    expect(check.measured).toBeCloseTo(3.1);
+    expect(check.ratio).toBeCloseTo(3.1 / 3.5);
   });
-  it("compares only finished 24 h windows, without corrections", () => {
-    const promises = [{ zeit: at(t0), wert: 1.5 }, { zeit: at(t0 + 24 * H), wert: 2.0 }];
-    const items = [booked(t0 + 12 * H, 1.2), booked(t0 + 36 * H, 1.9), booked(t0 + 2 * H, 1.11, "k")];
-    expect(promiseCheck(promises, items, t0 + 30 * H)).toMatchObject({ promised: 1.5, measured: 1.2, windows: 1 });
-    const two = promiseCheck(promises, items, t0 + 50 * H)!;
-    expect(two.promised).toBeCloseTo(3.5);
-    expect(two.measured).toBeCloseTo(3.1);
-    expect(two.windows).toBe(2);
+  it("gives no share when a day promised a loss or the sum is near zero", () => {
+    // the case that read 444 %: 0.28 + 0.34 + 0.31 − 0.61 = 0.32 € promised, 1.43 € measured
+    const values = [0.283, 0.338, 0.308, -0.606];
+    const promises = values.map((wert, i) => promise(`2026-11-1${i + 1}`, wert));
+    const measured = values.map((_, i) => ({ tag: `2026-11-1${i + 1}`, wert: i === 1 ? 1.433 : 0 }));
+    const check = promiseCheck(promises, measured)!;
+    expect(check.promised).toBeCloseTo(0.323);
+    expect(check.ratio).toBeNull();
+    const day = [{ tag: "2026-11-17", wert: 1 }];
+    expect(promiseCheck([promise("2026-11-17", 0.1)], day)!.ratio).toBeNull();
+    expect(promiseCheck([promise("2026-11-17", 1.5)], [{ tag: "2026-11-17", wert: 0 }])!.ratio).toBe(0);
   });
-  it("is empty before the first window is over", () => {
-    expect(promiseCheck([{ zeit: at(t0), wert: 1 }], [], t0 + 2 * H)).toBeNull();
-    expect(promiseCheck([], [], t0)).toBeNull();
+  it("is empty without a finished day, and ignores promises of the old kind (no day)", () => {
+    expect(promiseCheck([promise("2026-11-17", 1)], [])).toBeNull();
+    expect(promiseCheck([{ zeit: "2026-11-15T14:05+01:00", wert: 1 }], [{ tag: "2026-11-15", wert: 1 }])).toBeNull();
+    expect(promiseCheck([], [])).toBeNull();
   });
   it("counts the days since the start", () => {
     expect(daysSince("2026-11-09", Date.parse("2026-11-11T10:00:00"))).toBe(3);

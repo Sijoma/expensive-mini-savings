@@ -1,8 +1,9 @@
-"""The executor: runs the plan at the inverter (modes, approvals, push, booking, log, load profile).
+"""The executor: runs the plan at the inverter (modes, approvals, push, savings ledger, log, load profile).
 
 Rules are in control.py (no HA). This module wires them to Home Assistant: it reads the plan from the
-coordinator, switches the inverter through its entities, asks for approval by push, books savings and keeps
-a log. State is stored in .storage (ems.steuerung) and survives restarts.
+coordinator, switches the inverter through its entities, asks for approval by push, keeps the savings
+ledger (shadow.py: measured against the same battery without control) and a log. State is stored in
+.storage (ems.steuerung) and survives restarts.
 
 Former YAML executor (up to 0.5): on the first start, /config/ems/uebernahme.json (written by the author's
 takeover script) is imported once: mode, approval, running block, log, savings, forecast, load profile.
@@ -30,11 +31,12 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from . import archive
+from . import archive, shadow
 from . import control as c
 from . import switching as sw
 from .adapter import PlanBlock
 from .const import (
+    CONF_FEED_IN_CT,
     CONF_FORCED_POWER,
     CONF_NOTIFY,
     DOMAIN,
@@ -42,8 +44,8 @@ from .const import (
     SIGNAL_EXECUTOR,
     WEAR_CT_DEFAULT,
 )
+from .core.model import Tariff
 from .inputs import Inputs
-from .measurement import as_number
 from .settings import NotChangeable, PlannerSettings
 
 if TYPE_CHECKING:
@@ -84,6 +86,7 @@ def empty_state() -> dict[str, Any]:
         "running_block": None,
         "log": [],
         "savings": {"value": 0.0, "items": [], "since": today},
+        "ledger": shadow.new_ledger(today),
         "forecast": {"value": 0.0, "last_day": None, "since": today, "days": []},
         "load_profile": {"values": list(c.START_PROFILE), "meter": None, "at": None},
         "wear_ct": WEAR_CT_DEFAULT,
@@ -130,7 +133,7 @@ class Executor:
         coordinator: EmsCoordinator,
         inputs: Inputs,
         settings: PlannerSettings,
-        price_now_ct: Callable[[], float | None],
+        price_now_ct: Callable[..., float | None],
     ) -> None:
         self.hass = hass
         self.conf = conf
@@ -138,7 +141,7 @@ class Executor:
         self.inputs = inputs
         self.settings = settings
         self._price_now_ct = price_now_ct
-        """Current price in ct/kWh (PriceSource.now_ct)."""
+        """Price in ct/kWh now, or at a given time (PriceSource.now_ct)."""
         self.store: Store[dict[str, Any]] = Store(hass, STORE_VERSION, STORE_KEY)
         self.state = empty_state()
         settings.bind(self.state)
@@ -171,10 +174,26 @@ class Executor:
             self._save()
         if not self.state.get("archive"):
             self._backfill_archive()
+        if stored and "ledger" not in stored:
+            self._start_ledger()  # after the backfill: the old forecast days stay in the archive
+            await self.store.async_save(self.state)  # right away: a reload must not start it twice
         if self.state["archive"].get("since") == self._backfilled_at:
             await self.store.async_save(self.state)  # right away: a reload must not backfill twice
         self.target = self.state.get("set_by_ems") or c.NORMAL
         self.settings.bind(self.state)
+
+    def _start_ledger(self) -> None:
+        """Up to 0.8 the savings were the sum of what the plan promised per executed block (blocks overlap,
+        forecast errors did not show). The ledger starts at zero; the forecast starts anew with it, because
+        it now promises the ledger's quantity per calendar day."""
+        old = float(self.state["savings"].get("value") or 0.0)
+        today = dt_util.now().date().isoformat()
+        self.state["forecast"] = {"value": 0.0, "last_day": None, "since": today, "days": []}
+        self.log(
+            "Hinweis",
+            f"Ersparnis wird neu gemessen: gegen denselben Akku ohne Steuerung, pro Viertelstunde. "
+            f"Die bisherige Summe ({_eur(old)}) war die Schätzung des Plans und beginnt bei null",
+        )
 
     def _archive(self, kind: str, *entries: dict[str, Any]) -> None:
         self.hass.async_add_executor_job(archive.append, self.archive_folder, kind, list(entries))
@@ -224,7 +243,8 @@ class Executor:
             self.coordinator.async_add_listener(self._plan_updated),
             async_track_time_change(h, self._every_minute, second=5),
             async_track_time_change(h, self._check, minute=list(range(0, 60, 5)), second=20),
-            async_track_time_change(h, self._forecast, hour=14, minute=5, second=0),
+            # tomorrow's prices arrive around 13:00–14:00; later hours are retries if they were late
+            async_track_time_change(h, self._forecast, hour=list(range(14, 24)), minute=5, second=0),
             async_track_time_change(h, self._learn, minute=0, second=10),
             h.bus.async_listen("mobile_app_notification_action", self._notification_action),
         ]
@@ -272,8 +292,28 @@ class Executor:
 
     @callback
     def _plan_updated(self) -> None:
+        position = getattr(self.coordinator.data, "position_ct", None)
+        if position is not None and self.coordinator.last_update_success:
+            self.state["ledger"]["position_ct"] = round(float(position), 2)
+            self._save()
         self.evaluate()
         async_dispatcher_send(self.hass, SIGNAL_EXECUTOR)
+
+    # ---- savings ledger ----
+
+    @callback
+    def quarter_finished(self, records: list[dict[str, Any]]) -> None:
+        """Finished quarter hours from the measurement: book them against the shadow battery."""
+        ledger = self.state["ledger"]
+        battery = self.settings.battery()
+        tariff = Tariff(feed_in_ct=float(self.conf.get(CONF_FEED_IN_CT, 7.0)))
+        for record in records:
+            if record.get("preis_ct") is None:
+                # the measurement began before the first prices arrived (Home Assistant start)
+                record = {**record, "preis_ct": self._price_now_ct(datetime.fromisoformat(record["start"]))}
+            shadow.roll_day(ledger, record["start"][:10])
+            shadow.advance(ledger, record, battery, tariff)
+        self._changed()
 
     @callback
     def _inverter_changed(self, _event: Event) -> None:
@@ -515,8 +555,9 @@ class Executor:
             await self.notify("🔋 EMS", f"{goal} {section}".strip(), tag="ems-akku-info")
 
     def _book(self, record: dict[str, Any], kwh: float, eur: float, now: datetime) -> None:
+        """Note a finished block with its measured quantity and what the plan expected of it. A record of
+        what ran, not the savings: those are measured by the ledger."""
         savings = self.state["savings"]
-        savings["value"] = round(float(savings["value"]) + eur, 3)
         entry = {
             "start": record.get("start"), "ende": now.isoformat(timespec="minutes"), "was": record["action"],
             "kwh": round(kwh, 2), "betrag": round(eur, 3),
@@ -528,7 +569,7 @@ class Executor:
         since = f" seit {dt_util.as_local(start):%H:%M}" if start else ""
         amount = f"{kwh:.2f}".replace(".", ",")
         done = "geladen" if record["action"] == "l" else "aus dem Netz"
-        self.log("Abgerechnet", f"{what}{since}: {amount} kWh {done}, spart geschätzt {_eur(eur)}")
+        self.log("Abgerechnet", f"{what}{since}: {amount} kWh {done}, laut Plan {_eur(eur)}")
 
     # ---- approval requests ----
 
@@ -619,15 +660,16 @@ class Executor:
 
     @callback
     def _forecast(self, _now: datetime) -> None:
-        """Daily at 14:05 (tomorrow's prices are there): add the plan's expected savings of the next 24 h."""
-        data = self.coordinator.data
-        value = as_number(data.attribute.get("ersparnis_24h")) if data else None
-        if value is None:
-            return
+        """Once a day, as soon as the plan covers tomorrow (from 14:05): note what it expects to save
+        tomorrow, in the ledger's terms (shadow.promise_ct), to compare it with the measurement later."""
+        promise = getattr(self.coordinator.data, "promise", None)
         forecast = self.state["forecast"]
+        if not promise or any(d.get("tag") == promise["tag"] for d in forecast.get("days", [])):
+            return
+        value = float(promise["eur"])
         forecast["value"] = round(float(forecast["value"]) + value, 3)
         forecast["last_day"] = value
-        entry = {"at": dt_util.now().isoformat(timespec="minutes"), "value": value}
+        entry = {"at": dt_util.now().isoformat(timespec="minutes"), "tag": promise["tag"], "value": value}
         forecast["days"] = [*forecast.get("days", []), entry][-FORECAST_DAYS:]
         self._archive(archive.FORECAST, entry)
         self._changed()

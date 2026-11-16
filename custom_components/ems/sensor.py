@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import control as c
+from . import shadow
 from .coordinator import EmsCoordinator
 from .core.explanation import NAMES
 from .entity import ExecutorEntity
@@ -132,7 +133,9 @@ class TargetSensor(ExecutorEntity, SensorEntity):
 
 
 class SavingsSensor(ExecutorEntity, SensorEntity):
-    """Measured savings of the executed blocks (EUR, total)."""
+    """What the control has saved, measured against the same battery without control (shadow.py; EUR,
+    total, can fall). `kasse` is the money saved so far, `im_akku` the value of the `akku_mehr_kwh` the
+    battery holds more than it would without control; `tage` the finished days, `aktionen` what ran."""
 
     _attr_name = "EMS Ersparnis"
     _attr_unique_id = "ems_ersparnis"
@@ -146,16 +149,30 @@ class SavingsSensor(ExecutorEntity, SensorEntity):
 
     @property
     def native_value(self) -> float:
-        return round(float(self.executor.state["savings"]["value"]), 3)
+        return round(shadow.total_ct(self.executor.state["ledger"]) / 100, 3)
+
+    @property
+    def last_reset(self) -> datetime | None:
+        """Start of the ledger: a new method starts a new cycle instead of a jump in the statistics."""
+        since = dt_util.parse_date(self.executor.state["ledger"].get("since") or "")
+        return dt_util.start_of_local_day(since) if since else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        s = self.executor.state["savings"]
-        return {"aktionen": s["items"], "seit": s["since"]}
+        ledger = self.executor.state["ledger"]
+        return {
+            "aktionen": self.executor.state["savings"]["items"],
+            "seit": ledger["since"],
+            "kasse": round(float(ledger["cash_ct"]) / 100, 3),
+            "im_akku": round(float(ledger["position_ct"]) / 100, 3),
+            "akku_mehr_kwh": round(float(ledger["diff_kwh"]), 2),
+            "tage": ledger.get("days", []),
+        }
 
 
 class ForecastSensor(ExecutorEntity, SensorEntity):
-    """Trial run: the plan's expected savings of the next 24 h, added daily at 14:05 (EUR, total)."""
+    """What the plan expected to save per calendar day, noted the afternoon before (EUR, total). Same
+    quantity as the savings ledger, so `tage` here and there can be compared day by day."""
 
     _attr_name = "EMS Prognose-Ersparnis"
     _attr_unique_id = "ems_prognose_ersparnis"
@@ -179,7 +196,7 @@ class ForecastSensor(ExecutorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         s = self.executor.state["forecast"]
-        days = [{"zeit": d["at"], "wert": d["value"]} for d in s.get("days", [])]
+        days = [{"zeit": d["at"], "tag": d.get("tag"), "wert": d["value"]} for d in s.get("days", [])]
         return {"letzter_tag": s["last_day"], "seit": s["since"], "tage": days}
 
 

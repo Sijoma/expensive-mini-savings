@@ -1,6 +1,7 @@
-"""Record measurements continuously per quarter hour: /config/ems/messung/YYYY-MM-DD.jsonl.
+"""Measure continuously per quarter hour. Every finished quarter hour goes to the executor's savings ledger
+(shadow.py) and, with `messung: true`, into /config/ems/messung/YYYY-MM-DD.jsonl.
 
-Same fields as backtest/data/*.json (same computation, measurement.MeasurementWriter). This keeps the
+Same fields as backtest/data/*.json (same computation, measurement.MeasurementWriter). The files keep the
 data for calibration and backtests permanently, not just the ~10 days of HA history.
 """
 
@@ -36,6 +37,8 @@ class MeasurementRecorder:
         inputs: Inputs,
         price_now_ct: Callable[[], float | None],
         planned: Callable[[Any], tuple[str | None, float | None]],
+        on_finished: Callable[[list[dict[str, Any]]], None],
+        write_files: bool,
     ) -> None:
         self.hass = hass
         self.conf = conf
@@ -44,6 +47,9 @@ class MeasurementRecorder:
         """Current price in ct/kWh (the coordinator: `preis_jetzt` entity or the price list)."""
         self.planned = planned
         """Action and SoC the current plan wants for the quarter hour at a time (the coordinator)."""
+        self.on_finished = on_finished
+        """Receives the finished quarter hours (the executor's savings ledger)."""
+        self.write_files = write_files
         self.names = {
             entity_id: name
             for entity_id, name in (
@@ -113,7 +119,9 @@ class MeasurementRecorder:
         if not finished:
             return
         self._on_quarter_start()
-        self.hass.async_create_task(self._write(finished))
+        self.on_finished(finished)
+        if self.write_files:
+            self.hass.async_create_task(self._write(finished))
 
     async def _write(self, lines: list[dict[str, Any]]) -> None:
         def write() -> None:

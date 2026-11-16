@@ -139,7 +139,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return (st.state, st.last_changed) if st else (None, None)
         return executor.target, executor.target_since
 
-    coordinator = EmsCoordinator(hass, conf, entry, inputs, settings, prices, running)
+    def shadow_diff() -> float:
+        return float(executor.state["ledger"]["diff_kwh"])
+
+    coordinator = EmsCoordinator(hass, conf, entry, inputs, settings, prices, running, shadow_diff)
     executor = Executor(hass, conf, coordinator, inputs, settings, prices.now_ct)
     await executor.async_load()  # binds the stored settings before the first plan
     entry.runtime_data = EmsRuntime(conf, coordinator, executor, settings)
@@ -173,12 +176,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, replan))
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_executor))
 
-    if conf.get(CONF_MEASUREMENT):
-        # after the first plan when HA is already running (reload), so the first quarter hour has a price;
-        # on an HA start the first plan only comes at EVENT_HOMEASSISTANT_STARTED (then no price with Tibber)
-        measurement = MeasurementRecorder(hass, conf, inputs, prices.now_ct, coordinator.planned)
-        measurement.begin()
-        entry.async_on_unload(measurement.stop)
+    # Always measured (the savings ledger needs it); `messung: true` also writes the files.
+    # After the first plan when HA is already running (reload), so the first quarter hour has a price;
+    # on an HA start the first plan only comes at EVENT_HOMEASSISTANT_STARTED (then no price with Tibber)
+    measurement = MeasurementRecorder(
+        hass,
+        conf,
+        inputs,
+        prices.now_ct,
+        coordinator.planned,
+        on_finished=executor.quarter_finished,
+        write_files=bool(conf.get(CONF_MEASUREMENT)),
+    )
+    measurement.begin()
+    entry.async_on_unload(measurement.stop)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_register_panel(hass)

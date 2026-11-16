@@ -232,3 +232,45 @@ async def test_no_prices_without_entity_and_tibber(hass, freezer, set_states, no
     await hass.async_block_till_done()
     plan = hass.states.get(PLAN)
     assert plan is None or plan.state == "unavailable"
+
+
+async def test_measured_quarter_hours_reach_the_savings_ledger(hass, freezer, set_states, now, tmp_path):
+    """The measurement always runs (also without `messung: true`) and feeds the savings ledger: an hour of
+    hold at night costs grid power now and leaves the battery fuller than without control."""
+    hass.config.config_dir = str(tmp_path)
+    freezer.move_to(now)
+    await hass.config.async_set_time_zone("Europe/Berlin")
+    set_states(**{"sensor.battery_level": "45.0"})
+    hass.states.async_set("select.ems_mode", "Self-consumption mode (default)")
+    hass.states.async_set("select.battery_forced_charge_discharge", "Stop (default)")
+    hass.states.async_set("number.battery_max_discharge_power", "10")  # held
+    hass.states.async_set("sensor.electricity_price_now", "0.30")
+    for entity_id, watts in (
+        ("sensor.load_power", 400),
+        ("sensor.total_dc_power", 0),
+        ("sensor.battery_power", 0),
+        ("sensor.meter_active_power", 500),  # the house and 100 W for the inverter
+    ):
+        hass.states.async_set(entity_id, str(watts))
+    assert await async_setup_component(hass, "ems", {"ems": {**ENTITIES, "messung": False}})
+    await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries("ems")
+    executor = entry.runtime_data.executor
+    assert executor.state["ledger"]["cash_ct"] == 0
+
+    start = dt_util.now().replace(minute=45, second=0, microsecond=0)
+    # 22:45 closes a partial quarter hour (skipped), then two full ones; the action is read mid-quarter
+    for minutes in (0, 7.5, 15, 22.5, 30):
+        freezer.move_to(start + timedelta(minutes=minutes))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    ledger = executor.state["ledger"]
+    assert ledger["cash_ct"] < -3  # two quarter hours of 0.125 kWh from the grid instead of the battery
+    assert 0.2 < ledger["diff_kwh"] < 0.3
+    assert not (tmp_path / "ems" / "messung").exists()
+    state = hass.states.get("sensor.ems_ersparnis")
+    assert state.attributes["akku_mehr_kwh"] == round(ledger["diff_kwh"], 2)
+    # the planner values what the battery holds more, and promises tomorrow in the same terms
+    data = entry.runtime_data.coordinator.data
+    assert data.position_ct > 0 and state.attributes["im_akku"] > 0
+    assert data.promise is None or data.promise["tag"] == "2026-11-09"

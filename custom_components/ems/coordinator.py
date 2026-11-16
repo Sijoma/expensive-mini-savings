@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from . import shadow
 from .adapter import (
     PlanBlock,
     build_slots,
@@ -45,12 +46,20 @@ RunningSource = Callable[[], tuple[str | None, datetime | None]]
 `soll` entity): a running hold is not toggled by the plan."""
 
 
+ShadowSource = Callable[[], float]
+"""How many kWh the real battery holds more than the shadow battery (the executor's ledger)."""
+
+
 @dataclass(frozen=True)
 class Result:
     plan: Plan
     attribute: dict[str, Any]
     blocks: list[PlanBlock]
     computed: datetime
+    position_ct: float = 0.0
+    """What the content the real battery holds more than the shadow battery is worth (shadow.position_ct)."""
+    promise: dict[str, Any] | None = None
+    """Expected savings of tomorrow, {"tag": YYYY-MM-DD, "eur": …}; None while the plan does not cover it."""
 
 
 class EmsCoordinator(DataUpdateCoordinator[Result]):
@@ -63,6 +72,7 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
         settings: PlannerSettings,
         prices: PriceSource,
         running: RunningSource,
+        shadow_diff: ShadowSource,
     ) -> None:
         super().__init__(hass, _LOGGER, config_entry=entry, name="EMS", update_interval=None)
         self.conf = conf
@@ -70,6 +80,7 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
         self.settings = settings
         self.price_source = prices
         self._running = running
+        self._shadow_diff = shadow_diff
         self._last_recording: str | None = None
 
     async def _async_update_data(self) -> Result:
@@ -88,17 +99,27 @@ class EmsCoordinator(DataUpdateCoordinator[Result]):
         running, since = running_action(*self._running(), now)
         tariff = Tariff(feed_in_ct=float(self.conf.get(CONF_FEED_IN_CT, 7.0)))
 
-        t0 = time.perf_counter()
-        plan = await self.hass.async_add_executor_job(
-            lambda: create_plan(slots, e0, battery, tariff, running=running, since=since)
-        )
-        runtime = (time.perf_counter() - t0) * 1000
+        diff = self._shadow_diff()
+        tomorrow = (now + timedelta(days=1)).date()
+
+        def compute() -> tuple[Plan, float, float, float | None]:
+            t0 = time.perf_counter()
+            plan = create_plan(slots, e0, battery, tariff, running=running, since=since)
+            runtime = (time.perf_counter() - t0) * 1000
+            position = shadow.position_ct(slots, e0, diff, plan, battery, tariff)
+            e_shadow = shadow.shadow_content(e0, diff, battery)
+            return plan, runtime, position, shadow.promise_ct(plan, e_shadow, battery, tariff, tomorrow)
+
+        plan, runtime, position, promised = await self.hass.async_add_executor_job(compute)
         blocks = plan_blocks(plan, battery)
         attribute = plan_attributes(plan, battery, now, runtime, blocks)
+        promise = (
+            {"tag": tomorrow.isoformat(), "eur": round(promised / 100, 3)} if promised is not None else None
+        )
 
         if self.conf.get(CONF_RECORDING):
             await self._record(now, soc, running, since, plan, attribute)
-        return Result(plan, attribute, blocks, now)
+        return Result(plan, attribute, blocks, now, position, promise)
 
     def latest_blocks(self) -> list[PlanBlock]:
         """Blocks of the last plan, also when it is no longer fresh (offers, approvals, booking)."""

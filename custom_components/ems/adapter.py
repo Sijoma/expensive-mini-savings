@@ -19,9 +19,9 @@ from typing import Any
 
 from .core.explanation import NAMES, Plan
 from .core.forecast import SPIKE_SHARE, prepare
-from .core.model import DT_H, MIN_HOLD_SLOTS, Action, Battery, Slot, Tariff
+from .core.model import DT_H, MIN_HOLD_SLOTS, Action, Battery, Slot
 from .core.optimizer import SWITCH_CT
-from .core.simulation import flows, residual_per_kwh
+from .core.simulation import flows
 from .measurement import as_number
 
 FLOWS = ("pv_house", "battery_house", "grid_house", "pv_battery", "pv_grid", "grid_battery")
@@ -108,18 +108,6 @@ def running_action(target: str | None, since: datetime | None, now: datetime) ->
         return None, 0
     quarter = int((now - since) / timedelta(minutes=15)) + 1 if since else 2
     return action, max(quarter, 1)
-
-
-def savings_24h(plan: Plan, battery: Battery, quarters: int = 96) -> float:
-    """Savings (ct) of the next 24 h: costs without minus with plan, plus the value of the extra
-    content the plan leaves in the battery after 24 h (valued like the optimizer values the end of the
-    horizon). Without that term a night charge counts as cost, but its use the next day does not."""
-    n = min(quarters, len(plan.slots))
-    if n == 0:
-        return 0.0
-    cost = sum(x.cost_ct for x in plan.without.steps[:n]) - sum(x.cost_ct for x in plan.with_plan.steps[:n])
-    extra_kwh = plan.with_plan.steps[n - 1].e_after - plan.without.steps[n - 1].e_after
-    return cost + extra_kwh * residual_per_kwh(plan.slots, battery, Tariff())
 
 
 @dataclass(frozen=True)
@@ -242,8 +230,6 @@ def plan_attributes(
         "grund": plan.reason_now,
         "wert_jetzt_ct": round(plan.value_ct[0], 1) if plan.value_ct else None,
         "ersparnis_eur": round(plan.saves_ct / 100, 2),
-        # next 24 h, for sensor.ems_prognose_ersparnis (trial run)
-        "ersparnis_24h": round(savings_24h(plan, battery) / 100, 3),
         "netzladen_kwh": round(sum(x.grid_charged_kwh for x in plan.with_plan.steps), 1),
         "kosten_ohne_eur": round(plan.without.valuation_ct / 100, 2),
         "kosten_plan_eur": round(plan.with_plan.valuation_ct / 100, 2),

@@ -151,12 +151,17 @@
   },
   "sensor.ems_ersparnis": {
    "attributes": {
+    "akku_mehr_kwh": 0.0,
     "aktionen": [],
     "device_class": "monetary",
     "friendly_name": "EMS Ersparnis",
     "icon": "mdi:piggy-bank",
+    "im_akku": 0.0,
+    "kasse": 0.0,
+    "last_reset": "2026-11-08T00:00:00+01:00",
     "seit": "2026-11-08",
     "state_class": "total",
+    "tage": [],
     "unit_of_measurement": "EUR"
    },
    "state": "0.0"
@@ -216,7 +221,6 @@
     ],
     "berechnet": "2026-11-08T22:31:07+01:00",
     "bis": "2026-11-09T23:45:00+01:00",
-    "ersparnis_24h": 0.434,
     "ersparnis_eur": 0.43,
     "friendly_name": "EMS Plan Akku",
     "grund": "Akku läuft normal",

@@ -2,14 +2,13 @@ import { LitElement, html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import { define, type ChartOption } from "../chart";
 import { day, eur, num, time, toMs } from "../format";
-import { configured, dailyChanges, isoDay, statisticChange } from "../ha";
+import { configured, dailyChanges, statisticChange } from "../ha";
 import { savingsOption } from "../options";
 import { ACTIONS, COLORS, cardStyles, pillColor } from "../theme";
 import type { AppConfig, HomeAssistant } from "../types";
 
 const REFRESH_MS = 10 * 60_000;
 const DAYS = 30;
-const WINDOW_MS = 24 * 3_600_000;
 const DAY_MS = 86_400_000;
 
 export interface Booked {
@@ -20,39 +19,52 @@ export interface Booked {
   betrag: number;
 }
 
+/** What the plan expected to save on a calendar day, noted the afternoon before. */
 export interface Promise24h {
   zeit: string;
+  tag?: string | null;
+  wert: number;
+}
+
+/** A finished day of the savings ledger. */
+export interface DayValue {
+  tag: string;
   wert: number;
 }
 
 export interface PromiseCheck {
   promised: number;
   measured: number;
-  windows: number;
-  from: number;
-  to: number;
+  days: number;
+  from: string;
+  to: string;
+  /** measured / promised, or null when that share says nothing: a day promised nothing or a loss, or the
+   * promises add up to almost zero (a few cents promised and 1 € measured would read 1000 %). */
+  ratio: number | null;
 }
 
-/** Promised against measured, only over finished 24 h windows: a forecast made at 14:05 covers the next
- * 24 h; it counts once that time is over, together with the blocks that started inside it. Corrections
- * are not part of it. */
-export function promiseCheck(promises: Promise24h[], booked: Booked[], now: number): PromiseCheck | null {
+/** Below this promised sum (EUR) a share in percent is noise. */
+const MIN_PROMISED = 0.5;
+
+/** Promised against measured, day by day: only days that are over and have both a promise and a
+ * measurement. Both are the same quantity (savings against the battery without control), so they compare. */
+export function promiseCheck(promises: Promise24h[], measured: DayValue[]): PromiseCheck | null {
+  const byDay = new Map(measured.map((d) => [d.tag, d.wert]));
   const done = promises
-    .map((p) => ({ at: toMs(p.zeit), value: p.wert }))
-    .filter((p): p is { at: number; value: number } => p.at != null && p.at + WINDOW_MS <= now)
-    .sort((a, b) => a.at - b.at);
+    .filter((p): p is Promise24h & { tag: string } => !!p.tag && byDay.has(p.tag))
+    .sort((a, b) => a.tag.localeCompare(b.tag));
   if (!done.length) return null;
-  const from = done[0].at;
-  const to = done[done.length - 1].at + WINDOW_MS;
-  const measured = booked
-    .filter((b) => b.was !== "k")
-    .filter((b) => {
-      const start = toMs(b.start);
-      return start != null && start >= from && start < to;
-    })
-    .reduce((s, b) => s + (b.betrag || 0), 0);
-  const promised = done.reduce((s, p) => s + p.value, 0);
-  return { promised, measured, windows: done.length, from, to };
+  const promised = done.reduce((s, p) => s + p.wert, 0);
+  const sum = done.reduce((s, p) => s + (byDay.get(p.tag) ?? 0), 0);
+  const meaningful = promised >= MIN_PROMISED && done.every((p) => p.wert > 0);
+  return {
+    promised,
+    measured: sum,
+    days: done.length,
+    from: done[0].tag,
+    to: done[done.length - 1].tag,
+    ratio: meaningful ? sum / promised : null,
+  };
 }
 
 /** Days since the start of counting (inclusive), at least 1. */
@@ -98,10 +110,7 @@ export class EmsSavingsView extends LitElement {
     const forecast = configured(this.hass, this.config, "ersparnis_prognose");
     const promises: Promise24h[] = forecast?.attributes.tage ?? [];
     const byDay = new Map<string, number>();
-    for (const p of promises) {
-      const at = toMs(p.zeit);
-      if (at != null) byDay.set(isoDay(new Date(at)), (byDay.get(isoDay(new Date(at))) ?? 0) + p.wert);
-    }
+    for (const p of promises) if (p.tag) byDay.set(p.tag, p.wert);
     const promised = daily.days.map((d) => byDay.get(d) ?? null);
     const any = [...daily.values[measured], ...promised].some((v) => v != null);
     this.chart = any ? savingsOption(daily.days, daily.values[measured], promised) : undefined;
@@ -124,7 +133,9 @@ export class EmsSavingsView extends LitElement {
       (b) => Math.abs(b.kwh) >= 0.05 || Math.abs(b.betrag) >= 0.005,
     );
     const forecast = configured(this.hass, this.config, "ersparnis_prognose");
-    const check = promiseCheck(forecast?.attributes.tage ?? [], booked, now);
+    const check = promiseCheck(forecast?.attributes.tage ?? [], savings?.attributes.tage ?? []);
+    const inBattery = Number(savings?.attributes.im_akku) || 0;
+    const moreKwh = Number(savings?.attributes.akku_mehr_kwh) || 0;
     const p = this.periods;
     return html`<style>
         .hero {
@@ -205,7 +216,13 @@ export class EmsSavingsView extends LitElement {
             </span>
           </div>
           <p class="muted small" style="margin:6px 0 0">
-            Gemessen, nach Verlusten und Verschleiß: was der Akku gegenüber „ohne Steuerung“ gespart hat.
+            Gemessen, Viertelstunde für Viertelstunde, gegen denselben Akku ohne Steuerung. Nach Verlusten und
+            Verschleiß; kann auch negativ sein.
+            ${Math.abs(moreKwh) >= 0.1
+              ? html`Davon stecken <b>${eur(inBattery)}</b> noch im Akku: Er hat gerade
+                  ${num(Math.abs(moreKwh), 1)} kWh ${moreKwh > 0 ? "mehr" : "weniger"} als ohne Steuerung. Dieser
+                  Teil schwankt, bis die Energie verbraucht ist.`
+              : nothing}
           </p>
           <ul class="facts small">
             <li>heute <b>${p.today == null ? "–" : eur(p.today)}</b></li>
@@ -218,29 +235,34 @@ export class EmsSavingsView extends LitElement {
           <h2 id="promise-title"><ha-icon icon="mdi:scale-balance"></ha-icon>Hält der Plan, was er verspricht?</h2>
           ${check
             ? html`<p class="compare">
-                  In ${check.windows} ${check.windows === 1 ? "Tag" : "Tagen"} (${day(new Date(check.from).toISOString())}
-                  bis ${day(new Date(check.to).toISOString())}) hat der Plan <b>${eur(check.promised)}</b> versprochen,
-                  gemessen wurden <b>${eur(check.measured)}</b>${check.promised > 0
-                    ? html` (<b>${Math.round((check.measured / check.promised) * 100)} %</b>)`
-                    : nothing}.
+                  ${check.days === 1
+                    ? html`Am ${day(check.from)}`
+                    : html`An ${check.days} Tagen (${day(check.from)} bis ${day(check.to)})`}
+                  hat der Plan <b>${eur(check.promised)}</b> versprochen,
+                  gemessen wurden <b>${eur(check.measured)}</b>${check.ratio != null
+                    ? html` (<b>${Math.round(check.ratio * 100)} %</b>)`
+                    : html`, also <b>${eur(Math.abs(check.measured - check.promised))}</b>
+                        ${check.measured >= check.promised ? "mehr" : "weniger"} als versprochen`}.
                 </p>
-                ${check.promised > 0
+                ${check.ratio != null
                   ? html`<div
                       class="ratio"
                       role="img"
-                      aria-label="${Math.round((check.measured / check.promised) * 100)} Prozent des Versprochenen"
+                      aria-label="${Math.round(check.ratio * 100)} Prozent des Versprochenen"
                     >
-                      <div class="fill" style="width:${Math.min(100, (check.measured / check.promised) * 100)}%"></div>
+                      <div class="fill" style="width:${Math.min(100, check.ratio * 100)}%"></div>
                     </div>`
-                  : nothing}
+                  : html`<p class="muted small">
+                      Kein Prozentwert: An mindestens einem Tag hat der Plan nichts oder einen Verlust versprochen,
+                      oder die Summe ist zu klein, als dass ein Anteil etwas aussagt.
+                    </p>`}
                 <p class="muted small">
                   Liegt das über Wochen nahe 100 %, rechnet der Planer realistisch. Deutlich darunter heißt: Er ist zu
                   optimistisch (z. B. Verbrauch oder PV anders als erwartet, oder Aktionen wurden abgelehnt).
                 </p>`
             : html`<p class="compare">
-                Der Vergleich beginnt, sobald der erste 24-Stunden-Zeitraum seit dem
-                ${forecast?.attributes.seit ? day(forecast.attributes.seit) : "Start"} vorbei ist (die Prognose wird
-                täglich um 14:05 gemacht).
+                Der Vergleich beginnt mit dem ersten Tag, der vorbei ist und für den es beides gibt: die Prognose
+                vom Nachmittag davor und die Messung.
               </p>`}
         </section>
 
@@ -254,15 +276,15 @@ export class EmsSavingsView extends LitElement {
                 ></ems-chart>
                 <ul class="legend small muted" aria-label="Legende">
                   <li><i style="background:${COLORS.measured}"></i>Gemessen</li>
-                  <li><i style="background:${COLORS.forecast}"></i>Vom Plan versprochen (um 14:05 für die nächsten 24 h)</li>
+                  <li><i style="background:${COLORS.forecast}"></i>Vom Plan versprochen (am Nachmittag davor)</li>
                 </ul>`
             : html`<p class="muted">
-                ${this.loaded ? "Noch keine Tageswerte. Sie erscheinen nach dem ersten gebuchten Tag." : "Lädt …"}
+                ${this.loaded ? "Noch keine Tageswerte. Sie erscheinen nach dem ersten gemessenen Tag." : "Lädt …"}
               </p>`}
         </section>
 
         <section class="card wide" aria-labelledby="booked-title">
-          <h2 id="booked-title"><ha-icon icon="mdi:receipt-text-check"></ha-icon>Abgerechnete Aktionen</h2>
+          <h2 id="booked-title"><ha-icon icon="mdi:receipt-text-check"></ha-icon>Ausgeführte Aktionen</h2>
           ${booked.length
             ? html`<div class="scroll">
                 <table>
@@ -271,7 +293,7 @@ export class EmsSavingsView extends LitElement {
                       <th>Wann</th>
                       <th>Was</th>
                       <th class="num">Menge</th>
-                      <th class="num">Gespart</th>
+                      <th class="num">Laut Plan</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -298,21 +320,28 @@ export class EmsSavingsView extends LitElement {
                   </tbody>
                 </table>
               </div>`
-            : html`<p class="muted">Noch keine ausgeführte Aktion. Abgerechnet wird, sobald das EMS etwas geschaltet hat.</p>`}
+            : html`<p class="muted">Noch keine ausgeführte Aktion.</p>`}
           <details>
             <summary>So wird gerechnet</summary>
             <ul class="small" style="line-height:1.5">
               <li>
-                Jede ausgeführte Aktion bekommt die Ersparnis, die der Plan für sie ausgerechnet hat: Plan mit gegen Plan
-                ohne diese Aktion, nach Verlusten und Verschleiß.
+                Neben dem echten Akku läuft ein gedachter mit: derselbe Akku, aber ohne Steuerung. Jede Viertelstunde
+                wird verglichen, was der Strom mit dem einen und mit dem anderen gekostet hat.
               </li>
               <li>
-                Anteilig nach der gemessenen Menge (geladene kWh bzw. Netzbezug während der Sperre), höchstens der
-                geplante Betrag. Lief eine Aktion kürzer, zählt entsprechend weniger.
+                Wenn das EMS sperrt oder aus dem Netz lädt, zählt für den echten Akku, was die Zähler gemessen haben.
+                So ist auch drin, was der Plan nicht weiß oder falsch erwartet hat.
               </li>
               <li>
-                Versprochen: was der Plan jeden Tag um 14:05 für die nächsten 24 Stunden erwartet. Verglichen wird nur,
-                was schon vorbei ist.
+                Hat der echte Akku mehr Energie als der gedachte (etwa nach dem Laden in der Nacht), zählt sie mit
+                dem Wert, den der Plan ihr gibt. Sie ist weder Verlust noch Gewinn, bis sie verbraucht ist.
+              </li>
+              <li>
+                „Laut Plan“ in der Liste ist die Erwartung des Plans für die einzelne Aktion, keine Messung. Die
+                Beträge überschneiden sich und ergeben zusammen nicht die Ersparnis.
+              </li>
+              <li>
+                Versprochen: was der Plan am Nachmittag für den nächsten Kalendertag erwartet, in derselben Rechnung.
               </li>
             </ul>
           </details>

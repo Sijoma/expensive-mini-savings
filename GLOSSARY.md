@@ -45,5 +45,16 @@ The user's consent to the offered blocks, valid until the next 14:00 or the end 
 _Avoid_: release, Freigabe (in code)
 
 **Booking**:
-Crediting a finished block with its planned savings, scaled by the measured quantity.
+Noting a finished block with its measured quantity and what the plan expected of it. A record of what ran, not the savings.
 _Avoid_: accounting, billing
+
+**Shadow battery**:
+The same battery without control, kept alongside the real one. The savings are what the energy would have cost with the shadow minus what it cost in reality, quarter hour by quarter hour.
+_Avoid_: baseline, counterfactual
+
+**Savings ledger**:
+The running result of that comparison: money saved so far, plus the value of the content the real battery holds more than the shadow.
+
+**Promise**:
+What the plan expects to save on the next calendar day, in the ledger's terms, noted the afternoon before.
+_Avoid_: forecast (that is the PV forecast)
