@@ -22,11 +22,12 @@ FOREIGN_REPEAT_S = 12 * 3600
 """... and the same one at most every 12 h."""
 NORMAL_DISCHARGE_W = 5900
 """Normal discharge limit when the number entity reports no upper bound (SBH100)."""
-NO_PV_BELOW_W = 50
-"""A hold runs without PV (Forced mode + Stop, about 40 W less from the grid) once PV is below this ..."""
-PV_FROM_W = 150
-"""... and with PV (discharge limit, PV surplus charges) once PV reaches this. Between both nothing
-changes, so a cloud at dawn does not toggle the inverter."""
+NO_SURPLUS_BELOW_W = 50
+"""A hold runs without PV (Forced mode + Stop, about 40 W less from the grid) once the PV surplus (PV power
+minus house consumption) is below this: PV does not even cover the house, there is nothing to charge ..."""
+SURPLUS_FROM_W = 150
+"""... and with PV (discharge limit, PV surplus charges) once the surplus reaches this. Between both nothing
+changes, so a cloud or the heat pump starting does not toggle the inverter."""
 HOLD_VARIANT_MIN_S = 900
 """A hold variant runs at least this long before the other one is chosen."""
 
@@ -40,15 +41,15 @@ class HoldVariant:
     """None: no choice made yet (start), the next one applies at once."""
 
 
-def hold_variant(pv_w: float | None, last: HoldVariant, now: datetime) -> HoldVariant:
-    """Hold without PV below NO_PV_BELOW_W, with PV from PV_FROM_W, otherwise as before; never sooner
-    than HOLD_VARIANT_MIN_S after the last change. Unknown PV power: hold with PV (it never wastes PV
-    surplus, at worst it costs the 40 W)."""
+def hold_variant(surplus_w: float | None, last: HoldVariant, now: datetime) -> HoldVariant:
+    """Hold without PV below NO_SURPLUS_BELOW_W of PV surplus, with PV from SURPLUS_FROM_W, otherwise as
+    before; never sooner than HOLD_VARIANT_MIN_S after the last change. Unknown surplus (PV or consumption
+    missing): hold with PV (it never wastes PV surplus, at worst it costs the 40 W)."""
     if last.since is not None and (now - last.since).total_seconds() < HOLD_VARIANT_MIN_S:
         return last
-    if pv_w is None or not math.isfinite(pv_w) or pv_w >= PV_FROM_W:
+    if surplus_w is None or not math.isfinite(surplus_w) or surplus_w >= SURPLUS_FROM_W:
         no_pv = False
-    elif pv_w < NO_PV_BELOW_W:
+    elif surplus_w < NO_SURPLUS_BELOW_W:
         no_pv = True
     else:
         no_pv = last.no_pv
@@ -100,7 +101,7 @@ class Situation:
     inverter_changed_at: datetime | None = None
     """Last change of any inverter entity."""
     hold_no_pv: bool = False
-    """A hold runs as HOLD_NO_PV (hold_variant)."""
+    """A hold runs as HOLD_NO_PV: no PV surplus (hold_variant)."""
 
 
 class Kind(Enum):

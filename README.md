@@ -172,8 +172,9 @@ in the store are written once.
 | `number.ems_akku_verschleiss`, `number.ems_netzladeleistung` | wear (ct/kWh), grid charge power (kW) | `fest_in_yaml` |
 
 **How it switches** (Sungrow Modbus entities): hold = self-consumption with the discharge limit at 10 W (PV
-keeps charging), or forced mode + stop while there is no PV (about 40 W less from the grid on the author's
-SH15T; below 50 W PV, back from 150 W, at least 15 min each, needs `pv_leistung`); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
+keeps charging), or forced mode + stop while there is no PV surplus (about 40 W less from the grid on the
+author's SH15T; PV minus consumption below 50 W, back from 150 W, at least 15 min each, needs `pv_leistung`
+and `last_leistung`); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
 with the discharge limit back at its maximum. Every command is checked after 60 s. Blocks are run from 30 min
 (hold) / 15 min (grid charge) and 5 ct savings, grid charging stops at 98 %, a plan older than 30 min means
 normal operation.

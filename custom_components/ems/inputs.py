@@ -21,6 +21,7 @@ from .const import (
     CONF_FORCED,
     CONF_GRID_POWER,
     CONF_IMPORTED,
+    CONF_LOAD_POWER,
     CONF_PV_POWER,
     CONF_SOC,
     CONF_WP_BLOCK,
@@ -101,6 +102,11 @@ class Inputs:
 
     def pv_w(self) -> float | None:
         return self.power_w(CONF_PV_POWER)
+
+    def surplus_w(self) -> float | None:
+        """PV power minus house consumption in W; None if either is missing."""
+        pv, load = self.pv_w(), self.power_w(CONF_LOAD_POWER)
+        return pv - load if pv is not None and load is not None else None
 
     def switch(self, key: str) -> bool | None:
         """On/off of a switch; None if not configured or no value."""

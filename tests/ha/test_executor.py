@@ -168,10 +168,12 @@ async def test_automatic_hold_switches_in_order_and_books(hass, ems, inverter, m
 
 
 async def test_hold_runs_without_pv_and_follows_the_morning_pv(hass, ems, inverter, monkeypatch, freezer):
-    """Night: hold with Forced mode + Stop (about 40 W less from the grid). PV comes up: after the minimum
-    time the same block continues as hold with discharge limit (PV charges), without a new booking."""
+    """Night: hold with Forced mode + Stop (about 40 W less from the grid). PV surplus comes up: after the
+    minimum time the same block continues as hold with discharge limit (PV charges), without a new booking."""
     hass.states.async_set("sensor.total_dc_power", "0", {"unit_of_measurement": "W"})
-    with_plan(ems, monkeypatch, [block_now("h", length=120, spart=0.6, netz=2.0)])
+    hass.states.async_set("sensor.load_power", "400", {"unit_of_measurement": "W"})
+    hold = block_now("h", length=120, spart=0.6, netz=2.0)
+    with_plan(ems, monkeypatch, [hold])
     await ems.set_mode(c.AUTOMATIC)
     await hass.async_block_till_done()
     assert inverter["calls"] == [(FORCED, c.FORCED_STOP), (MODE, c.FORCED_MODE), (DISCHARGE, 5900)]
@@ -181,22 +183,34 @@ async def test_hold_runs_without_pv_and_follows_the_morning_pv(hass, ems, invert
     started = ems.state["running_block"]
     assert started["action"] == "h"
 
-    # PV comes up, but the last change is too recent: nothing yet
+    # PV comes up but does not cover the house (grey winter day): still without PV, also after 20 min
     inverter["calls"].clear()
-    hass.states.async_set("sensor.total_dc_power", "0.6", {"unit_of_measurement": "kW"})
-    freezer.tick(timedelta(minutes=5))
-    ems.evaluate()
+    hass.states.async_set("sensor.total_dc_power", "300", {"unit_of_measurement": "W"})
+    for _ in range(4):
+        freezer.tick(timedelta(minutes=5))
+        ems.evaluate()
     await hass.async_block_till_done()
     assert inverter["calls"] == []
 
-    freezer.tick(timedelta(minutes=11))
+    # PV surplus (1 kW against 400 W): switches at once, the last change was long ago ...
+    hass.states.async_set("sensor.total_dc_power", "1.0", {"unit_of_measurement": "kW"})
+    freezer.tick(timedelta(minutes=1))
     ems.evaluate()
     await hass.async_block_till_done()
     assert inverter["calls"] == [(DISCHARGE, 10), (FORCED, c.FORCED_STOP), (MODE, c.SELF_CONSUMPTION)]
     assert ems.state["set_by_ems"] == c.HOLD
     assert ems.state["running_block"] == started  # the same block runs on
     assert ems.state["savings"]["items"] == []
-    assert ems.state["log"][0]["text"] == f"{c.HOLD_NO_PV} → {c.HOLD} (PV liefert)"
+
+    # ... and a cloud right after it changes nothing for 15 min
+    with_plan(ems, monkeypatch, [hold])  # a fresh plan (older than 30 min means normal operation)
+    inverter["calls"].clear()
+    hass.states.async_set("sensor.total_dc_power", "0.2", {"unit_of_measurement": "kW"})
+    freezer.tick(timedelta(minutes=14))
+    ems.evaluate()
+    await hass.async_block_till_done()
+    assert inverter["calls"] == []
+    assert ems.state["log"][0]["text"] == f"{c.HOLD_NO_PV} → {c.HOLD} (PV-Überschuss)"
 
     # the block ends: booked once, back to normal
     hass.states.async_set("sensor.total_imported_energy", "501.0")
@@ -211,6 +225,7 @@ async def test_hold_runs_without_pv_and_follows_the_morning_pv(hass, ems, invert
 async def test_own_hold_without_pv_survives_a_restart(hass, ems, inverter, monkeypatch):
     """After a restart the stored setting "hold without PV" is the target hold again, not foreign."""
     hass.states.async_set("sensor.total_dc_power", "0", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.load_power", "300", {"unit_of_measurement": "W"})
     with_plan(ems, monkeypatch, [block_now("h", length=120)])
     await ems.set_mode(c.AUTOMATIC)
     await hass.async_block_till_done()

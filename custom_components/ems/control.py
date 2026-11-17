@@ -30,7 +30,8 @@ NORMAL = "Eigenverbrauch"
 HOLD = "Entladung gesperrt"
 CHARGE = "Laden aus dem Netz"
 HOLD_NO_PV = "Entladung gesperrt (ohne PV)"
-"""How a hold runs while there is no PV: Forced mode + Stop. The target stays HOLD; only the setting at
+"""How a hold runs while there is no PV surplus: Forced mode + Stop (the name stays for stored states).
+The target stays HOLD; only the setting at
 the inverter differs (switching.hold_variant decides which one)."""
 HOLDS = (HOLD, HOLD_NO_PV)
 NAME = {"h": HOLD, "l": CHARGE}

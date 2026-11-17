@@ -239,9 +239,11 @@ NIGHT = sw.HoldVariant(True, LONG_AGO)
 
 
 @pytest.mark.parametrize(
-    ("pv_w", "last", "no_pv"),
+    ("surplus_w", "last", "no_pv"),
     [
+        # PV surplus = PV power − house consumption
         (0, START, True),  # at start the choice applies at once
+        (-300, DAY, True),  # PV 200 W, house 500 W: PV shines, but there is nothing to charge (17.11.)
         (300, START, False),
         (100, START, False),  # in the band at start: with PV (the default)
         (0, DAY, True),
@@ -251,14 +253,14 @@ NIGHT = sw.HoldVariant(True, LONG_AGO)
         (50, NIGHT, True),
         (149.9, NIGHT, True),
         (150, NIGHT, False),
-        (None, NIGHT, False),  # PV unknown: hold with PV, it never wastes surplus
+        (None, NIGHT, False),  # PV or consumption unknown: hold with PV, it never wastes surplus
         (float("nan"), NIGHT, False),
         (float("inf"), NIGHT, False),
         (float("-inf"), NIGHT, False),
     ],
 )
-def test_hold_variant(pv_w, last, no_pv):
-    assert sw.hold_variant(pv_w, last, NOW).no_pv is no_pv
+def test_hold_variant(surplus_w, last, no_pv):
+    assert sw.hold_variant(surplus_w, last, NOW).no_pv is no_pv
 
 
 def test_hold_variant_waits_before_changing_again():

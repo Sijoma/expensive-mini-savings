@@ -284,7 +284,7 @@ class Executor:
             # no plan yet since start: keep what runs (no switching back and forth during a restart)
             return
         now = dt_util.now()
-        hold, self.hold = self.hold, sw.hold_variant(self.inputs.pv_w(), self.hold, now)
+        hold, self.hold = self.hold, sw.hold_variant(self.inputs.surplus_w(), self.hold, now)
         if hold.no_pv != self.hold.no_pv and self.target == c.HOLD:
             self.hass.async_create_task(self.apply("pv"))
         blocks = self.coordinator.latest_blocks()
@@ -538,8 +538,8 @@ class Executor:
         now = dt_util.now()
         self.state["set_by_ems"] = goal
         if current in c.HOLDS and goal in c.HOLDS:
-            # the same hold, now with or without PV: the block keeps running (no booking, no push)
-            why = "keine PV" if goal == c.HOLD_NO_PV else "PV liefert"
+            # the same hold, now with or without PV surplus: the block keeps running (no booking, no push)
+            why = "kein PV-Überschuss" if goal == c.HOLD_NO_PV else "PV-Überschuss"
             self.log("Geschaltet", f"{current} → {goal} ({why})")
             self._changed()
             return

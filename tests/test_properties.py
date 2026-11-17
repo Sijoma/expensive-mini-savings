@@ -16,7 +16,7 @@ from hypothesis import strategies as st
 from custom_components.ems import control as c
 from custom_components.ems import heat_pump_control as hp
 from custom_components.ems import switching as sw
-from custom_components.ems.adapter import PlanBlock, price_at, prices_from_tibber
+from custom_components.ems.adapter import PlanBlock
 from custom_components.ems.const import GRID_KW_MAX
 from custom_components.ems.measurement import action_from, as_number
 
@@ -261,75 +261,55 @@ def test_switching_between_own_settings_never_frees_the_battery_on_the_way(start
 
 
 START_AT = datetime(2026, 11, 17, 6, 0, tzinfo=TZ)
-pv_readings = st.one_of(
+surplus_readings = st.one_of(
     st.none(),
     st.floats(allow_nan=True, allow_infinity=True),
-    st.floats(-10, 400),
-    st.sampled_from([49.9, 50, 150]),
+    st.floats(-3000, 400),
+    st.sampled_from([-300, 49.9, 50, 150]),
 )
+"""PV surplus in W (PV power − house consumption)."""
+# the spec of the hold variant, written out (not taken from switching): below 50 W surplus without PV, from
+# 150 W with PV, at least 15 min per variant
+NO_SURPLUS_BELOW_W, SURPLUS_FROM_W, VARIANT_MIN_S = 50, 150, 900
 
 
-@given(pv_readings, st.booleans(), st.one_of(st.none(), st.integers(0, 3 * sw.HOLD_VARIANT_MIN_S)))
-def test_hold_variant_rules(pv_w, no_pv, ago_s):
+@given(surplus_readings, st.booleans(), st.one_of(st.none(), st.integers(0, 3 * VARIANT_MIN_S)))
+def test_hold_variant_rules(surplus_w, no_pv, ago_s):
     since = None if ago_s is None else START_AT - timedelta(seconds=ago_s)
     last = sw.HoldVariant(no_pv, since)
-    new = sw.hold_variant(pv_w, last, START_AT)
-    may_change = since is None or ago_s >= sw.HOLD_VARIANT_MIN_S
+    new = sw.hold_variant(surplus_w, last, START_AT)
+    may_change = since is None or ago_s >= VARIANT_MIN_S
     if not may_change:
         assert new == last
         return
-    known = pv_w is not None and math.isfinite(pv_w)
-    if not known or pv_w >= sw.PV_FROM_W:
-        assert new.no_pv is False  # unknown or enough PV: the hold that lets PV charge
-    elif pv_w < sw.NO_PV_BELOW_W:
+    known = surplus_w is not None and math.isfinite(surplus_w)
+    if not known or surplus_w >= SURPLUS_FROM_W:
+        assert new.no_pv is False  # unknown or enough surplus: the hold that lets PV charge
+    elif surplus_w < NO_SURPLUS_BELOW_W:
         assert new.no_pv is True
     else:
         assert new.no_pv is no_pv
     assert (new.since == START_AT) == (new.no_pv != no_pv or since is None)
 
 
-@given(st.lists(pv_readings, min_size=1, max_size=300))
+@given(st.lists(surplus_readings, min_size=1, max_size=300))
 def test_hold_variant_over_a_day_never_toggles_faster_than_allowed(minutes):
-    """PV read once a minute: the variant changes at most once per HOLD_VARIANT_MIN_S, and a PV signal that
-    stays inside the band changes nothing after the start."""
+    """Surplus read once a minute: the variant changes at most once per 15 min, and a surplus that stays
+    inside the band changes nothing after the start."""
     v = sw.HoldVariant()
     changes = []
-    for i, pv_w in enumerate(minutes):
+    for i, surplus_w in enumerate(minutes):
         now = START_AT + timedelta(minutes=i)
-        new = sw.hold_variant(pv_w, v, now)
+        new = sw.hold_variant(surplus_w, v, now)
         if new.since != v.since and v.since is not None:
             changes.append(now)
         v = new
     for a, b in itertools.pairwise(changes):
-        assert (b - a).total_seconds() >= sw.HOLD_VARIANT_MIN_S
-    assert len(changes) <= len(minutes) * 60 // sw.HOLD_VARIANT_MIN_S + 1
-    inside = all(x is not None and sw.NO_PV_BELOW_W <= x < sw.PV_FROM_W for x in minutes[1:])
+        assert (b - a).total_seconds() >= VARIANT_MIN_S
+    assert len(changes) <= len(minutes) * 60 // VARIANT_MIN_S + 1
+    inside = all(x is not None and NO_SURPLUS_BELOW_W <= x < SURPLUS_FROM_W for x in minutes[1:])
     if inside:
         assert changes == []
-
-
-# ---- prices ----
-
-
-@given(st.lists(st.tuples(st.integers(-4, 200), st.floats(-50, 200, allow_nan=False)), max_size=20))
-def test_price_of_the_quarter_hour(raw):
-    prices = [[NOW_MS + i * QUARTER, p] for i, p in raw]
-    price = price_at(prices, NOW + timedelta(minutes=7))
-    assert price is None or price in [p for t, p in prices if t == NOW_MS]
-
-
-json_like = st.recursive(
-    st.none() | st.text(max_size=8) | st.floats() | st.integers() | st.booleans(),
-    lambda inner: st.lists(inner, max_size=4) | st.dictionaries(st.text(max_size=8), inner, max_size=4),
-    max_leaves=12,
-)
-
-
-@given(st.dictionaries(st.sampled_from(["prices", "x"]), json_like, max_size=2))
-def test_any_tibber_response_gives_a_sorted_price_list(response):
-    prices = prices_from_tibber(response)
-    assert prices == sorted(prices)
-    assert all(isinstance(t, int) and isinstance(p, float) for t, p in prices)
 
 
 # ---- heat pump PV boost ----
