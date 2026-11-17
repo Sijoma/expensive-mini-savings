@@ -173,3 +173,98 @@ def test_quiet_and_repeat_times_are_inclusive():
         foreign_reported=sw.ForeignReport(OTHER, NOW - timedelta(seconds=sw.FOREIGN_REPEAT_S)),
     )
     assert sw.decide(repeat).kind is sw.Kind.NOTHING
+
+
+# ---- hold with or without PV ----
+
+
+@pytest.mark.parametrize(
+    ("changes", "kind", "goal"),
+    [
+        # without PV the hold runs as Forced mode + Stop ...
+        ({"hold_no_pv": True}, sw.Kind.SWITCH, c.HOLD_NO_PV),
+        # ... and the EMS changes between its own two holds both ways
+        ({"hold_no_pv": True, "current": c.HOLD, "set_by_ems": c.HOLD}, sw.Kind.SWITCH, c.HOLD_NO_PV),
+        ({"current": c.HOLD_NO_PV, "set_by_ems": c.HOLD_NO_PV}, sw.Kind.SWITCH, c.HOLD),
+        (
+            {"hold_no_pv": True, "current": c.HOLD_NO_PV, "set_by_ems": c.HOLD_NO_PV},
+            sw.Kind.NOTHING,
+            c.NORMAL,
+        ),
+        # the variant only concerns holds
+        ({"hold_no_pv": True, "target": c.CHARGE}, sw.Kind.SWITCH, c.CHARGE),
+        (
+            {"hold_no_pv": True, "target": c.NORMAL, "current": c.HOLD_NO_PV, "set_by_ems": c.HOLD_NO_PV},
+            sw.Kind.SWITCH,
+            c.NORMAL,
+        ),
+        # "Nur planen" takes back the own hold without PV, too
+        (
+            {"mode": c.PLAN_ONLY, "current": c.HOLD_NO_PV, "set_by_ems": c.HOLD_NO_PV, "trigger": "modus"},
+            sw.Kind.SWITCH,
+            c.NORMAL,
+        ),
+        # Forced mode + Stop that the EMS did not set is still foreign (e.g. during an own grid charge)
+        (
+            {
+                "target": c.CHARGE,
+                "current": c.HOLD_NO_PV,
+                "set_by_ems": c.CHARGE,
+                "inverter_changed_at": LONG_AGO,
+            },
+            sw.Kind.REPORT_FOREIGN,
+            c.CHARGE,
+        ),
+    ],
+)
+def test_decide_hold_variant(changes, kind, goal):
+    d = sw.decide(situation(**changes))
+    assert d.kind is kind
+    if kind is not sw.Kind.NOTHING:
+        assert d.goal == goal
+
+
+def test_commands_for_the_hold_without_pv():
+    steps = sw.commands_for(c.HOLD_NO_PV, grid_kw=5, power_configured=True, normal_discharge_w=4000)
+    assert [(x.kind, x.key, x.value) for x in steps] == [
+        ("select", CONF_FORCED, c.FORCED_STOP),
+        ("select", CONF_EMS_MODE, c.FORCED_MODE),
+        ("number", CONF_DISCHARGE_MAX, 4000),
+    ]
+
+
+START = sw.HoldVariant()
+DAY = sw.HoldVariant(False, LONG_AGO)
+NIGHT = sw.HoldVariant(True, LONG_AGO)
+
+
+@pytest.mark.parametrize(
+    ("pv_w", "last", "no_pv"),
+    [
+        (0, START, True),  # at start the choice applies at once
+        (300, START, False),
+        (100, START, False),  # in the band at start: with PV (the default)
+        (0, DAY, True),
+        (49.9, DAY, True),
+        (50, DAY, False),  # the band 50 … 150 W keeps what runs
+        (149.9, DAY, False),
+        (50, NIGHT, True),
+        (149.9, NIGHT, True),
+        (150, NIGHT, False),
+        (None, NIGHT, False),  # PV unknown: hold with PV, it never wastes surplus
+        (float("nan"), NIGHT, False),
+        (float("inf"), NIGHT, False),
+        (float("-inf"), NIGHT, False),
+    ],
+)
+def test_hold_variant(pv_w, last, no_pv):
+    assert sw.hold_variant(pv_w, last, NOW).no_pv is no_pv
+
+
+def test_hold_variant_waits_before_changing_again():
+    just = sw.HoldVariant(True, NOW - timedelta(seconds=sw.HOLD_VARIANT_MIN_S - 1))
+    assert sw.hold_variant(2000, just, NOW) == just
+    due = sw.HoldVariant(True, NOW - timedelta(seconds=sw.HOLD_VARIANT_MIN_S))
+    assert sw.hold_variant(2000, due, NOW) == sw.HoldVariant(False, NOW)
+    # no change: the time of the last change stays (it is not a heartbeat)
+    assert sw.hold_variant(0, due, NOW) == due

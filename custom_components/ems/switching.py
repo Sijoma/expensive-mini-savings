@@ -7,6 +7,7 @@ No HA import, so every case is a table test. The executor gathers the Situation,
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -21,6 +22,39 @@ FOREIGN_REPEAT_S = 12 * 3600
 """... and the same one at most every 12 h."""
 NORMAL_DISCHARGE_W = 5900
 """Normal discharge limit when the number entity reports no upper bound (SBH100)."""
+NO_PV_BELOW_W = 50
+"""A hold runs without PV (Forced mode + Stop, about 40 W less from the grid) once PV is below this ..."""
+PV_FROM_W = 150
+"""... and with PV (discharge limit, PV surplus charges) once PV reaches this. Between both nothing
+changes, so a cloud at dawn does not toggle the inverter."""
+HOLD_VARIANT_MIN_S = 900
+"""A hold variant runs at least this long before the other one is chosen."""
+
+
+@dataclass(frozen=True)
+class HoldVariant:
+    """Which hold runs while the target is HOLD, and since when the choice holds."""
+
+    no_pv: bool = False
+    since: datetime | None = None
+    """None: no choice made yet (start), the next one applies at once."""
+
+
+def hold_variant(pv_w: float | None, last: HoldVariant, now: datetime) -> HoldVariant:
+    """Hold without PV below NO_PV_BELOW_W, with PV from PV_FROM_W, otherwise as before; never sooner
+    than HOLD_VARIANT_MIN_S after the last change. Unknown PV power: hold with PV (it never wastes PV
+    surplus, at worst it costs the 40 W)."""
+    if last.since is not None and (now - last.since).total_seconds() < HOLD_VARIANT_MIN_S:
+        return last
+    if pv_w is None or not math.isfinite(pv_w) or pv_w >= PV_FROM_W:
+        no_pv = False
+    elif pv_w < NO_PV_BELOW_W:
+        no_pv = True
+    else:
+        no_pv = last.no_pv
+    if no_pv == last.no_pv and last.since is not None:
+        return last
+    return HoldVariant(no_pv, now)
 
 
 @dataclass(frozen=True)
@@ -57,13 +91,16 @@ class Situation:
     set_by_ems: str
     """What the EMS set last."""
     trigger: str
-    """Why the decision is made: "soll" (target changed), "modus", "pruefen" (periodic check)."""
+    """Why the decision is made: "soll" (target changed), "modus", "pruefen" (periodic check), "pv" (hold
+    variant changed)."""
     now: datetime
     switch_failed: bool = False
     """The last own switch was not confirmed: the setting at the inverter may be a half-done command."""
     foreign_reported: ForeignReport | None = None
     inverter_changed_at: datetime | None = None
     """Last change of any inverter entity."""
+    hold_no_pv: bool = False
+    """A hold runs as HOLD_NO_PV (hold_variant)."""
 
 
 class Kind(Enum):
@@ -85,9 +122,11 @@ NOTHING = Decision(Kind.NOTHING)
 def decide(s: Situation) -> Decision:
     """Switch to the goal, report a setting that did not come from the EMS (never override it), or do
     nothing. In "Nur planen" the goal is normal operation, and only the EMS's own setting is taken back,
-    and only when the mode changes."""
+    and only when the mode changes. The target HOLD becomes HOLD_NO_PV while there is no PV."""
     active = s.mode in (c.WITH_APPROVAL, c.AUTOMATIC)
     goal = s.target if active else c.NORMAL
+    if goal == c.HOLD and s.hold_no_pv:
+        goal = c.HOLD_NO_PV
     if not s.ready or goal == s.current:
         return NOTHING
     if not active and not (s.trigger == "modus" and s.current == s.set_by_ems and s.current != c.NORMAL):
@@ -133,6 +172,15 @@ def commands_for(
             Step("number", CONF_DISCHARGE_MAX, c.HOLD_DISCHARGE_W),
             Step("select", CONF_FORCED, c.FORCED_STOP),
             Step("select", CONF_EMS_MODE, c.SELF_CONSUMPTION),
+        ]
+    if goal == c.HOLD_NO_PV:
+        # Stop first, then Forced mode: from here on the battery is held, whatever comes before (a hold
+        # with discharge limit stays held throughout). The limit back to normal last, as measured on the
+        # test night; if it fails, the battery is still held.
+        return [
+            Step("select", CONF_FORCED, c.FORCED_STOP),
+            Step("select", CONF_EMS_MODE, c.FORCED_MODE),
+            Step("number", CONF_DISCHARGE_MAX, normal_discharge_w),
         ]
     return [
         Step("select", CONF_FORCED, c.FORCED_STOP),

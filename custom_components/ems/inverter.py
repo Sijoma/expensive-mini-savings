@@ -28,7 +28,8 @@ class InverterSetting(Enum):
     CHARGE = "l"
     """Forced charge from the grid."""
     OLD_HOLD = "f"
-    """Forced mode + Stop: the hold of the old YAML executor."""
+    """Forced mode + Stop: the battery neither charges nor discharges. The hold of the old YAML executor,
+    and since 0.10 the EMS's hold while there is no PV (control.HOLD_NO_PV)."""
     FORCED_DISCHARGE = "e"
     VPP = "v"
     """A provider (e.g. Tibber) controls the battery."""

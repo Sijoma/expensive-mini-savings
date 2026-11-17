@@ -167,6 +167,66 @@ async def test_automatic_hold_switches_in_order_and_books(hass, ems, inverter, m
     assert float(hass.states.get("sensor.ems_ersparnis").state) == 0
 
 
+async def test_hold_runs_without_pv_and_follows_the_morning_pv(hass, ems, inverter, monkeypatch, freezer):
+    """Night: hold with Forced mode + Stop (about 40 W less from the grid). PV comes up: after the minimum
+    time the same block continues as hold with discharge limit (PV charges), without a new booking."""
+    hass.states.async_set("sensor.total_dc_power", "0", {"unit_of_measurement": "W"})
+    with_plan(ems, monkeypatch, [block_now("h", length=120, spart=0.6, netz=2.0)])
+    await ems.set_mode(c.AUTOMATIC)
+    await hass.async_block_till_done()
+    assert inverter["calls"] == [(FORCED, c.FORCED_STOP), (MODE, c.FORCED_MODE), (DISCHARGE, 5900)]
+    assert ems.state["set_by_ems"] == c.HOLD_NO_PV
+    assert hass.states.get("sensor.ems_akku_soll").state == c.HOLD  # the target stays "hold"
+    assert hass.states.get("sensor.ems_akku_soll").attributes["ist"] == c.HOLD_NO_PV
+    started = ems.state["running_block"]
+    assert started["action"] == "h"
+
+    # PV comes up, but the last change is too recent: nothing yet
+    inverter["calls"].clear()
+    hass.states.async_set("sensor.total_dc_power", "0.6", {"unit_of_measurement": "kW"})
+    freezer.tick(timedelta(minutes=5))
+    ems.evaluate()
+    await hass.async_block_till_done()
+    assert inverter["calls"] == []
+
+    freezer.tick(timedelta(minutes=11))
+    ems.evaluate()
+    await hass.async_block_till_done()
+    assert inverter["calls"] == [(DISCHARGE, 10), (FORCED, c.FORCED_STOP), (MODE, c.SELF_CONSUMPTION)]
+    assert ems.state["set_by_ems"] == c.HOLD
+    assert ems.state["running_block"] == started  # the same block runs on
+    assert ems.state["savings"]["items"] == []
+    assert ems.state["log"][0]["text"] == f"{c.HOLD_NO_PV} → {c.HOLD} (PV liefert)"
+
+    # the block ends: booked once, back to normal
+    hass.states.async_set("sensor.total_imported_energy", "501.0")
+    with_plan(ems, monkeypatch, [])
+    inverter["calls"].clear()
+    ems.evaluate()
+    await hass.async_block_till_done()
+    assert inverter["calls"] == [(FORCED, c.FORCED_STOP), (MODE, c.SELF_CONSUMPTION), (DISCHARGE, 5900)]
+    assert [i["was"] for i in ems.state["savings"]["items"]] == ["h"]
+
+
+async def test_own_hold_without_pv_survives_a_restart(hass, ems, inverter, monkeypatch):
+    """After a restart the stored setting "hold without PV" is the target hold again, not foreign."""
+    hass.states.async_set("sensor.total_dc_power", "0", {"unit_of_measurement": "W"})
+    with_plan(ems, monkeypatch, [block_now("h", length=120)])
+    await ems.set_mode(c.AUTOMATIC)
+    await hass.async_block_till_done()
+    assert ems.state["set_by_ems"] == c.HOLD_NO_PV
+    await ems.store.async_save(ems.state)
+    ems.target = c.NORMAL
+    await ems.async_load()  # as after a restart
+    assert ems.target == c.HOLD
+    inverter["calls"].clear()
+    await ems.apply("pruefen")
+    ems.evaluate()
+    await hass.async_block_till_done()
+    assert inverter["calls"] == []
+    assert not [e for e in ems.state["log"] if e["art"] == "Manuell"]
+
+
 async def test_grid_charge_sets_power_and_forced_charge(hass, ems, inverter, monkeypatch):
     with_plan(ems, monkeypatch, [block_now("l", kwh=4.0, spart=0.8)])
     await ems.set_number("grid_charge_kw", 3.5)

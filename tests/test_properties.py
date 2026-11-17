@@ -5,6 +5,8 @@ inverter classification, approvals and target, booking, load profile, switching 
 
 from __future__ import annotations
 
+import itertools
+import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -58,6 +60,7 @@ def test_inverter_views_never_fail_and_agree(mode, forced, discharge):
     assert (code == "h") == (state == c.HOLD)
     assert (code == "l") == (state == c.CHARGE)
     assert (code == "x") == (state == c.UNREACHABLE)
+    assert (code == "f") == (state == c.HOLD_NO_PV)
 
 
 @given(st.one_of(raw_number, st.lists(st.integers()), st.dictionaries(st.text(), st.integers())))
@@ -140,21 +143,31 @@ def test_learning_changes_at_most_one_hour_and_stays_plausible(profile, meter, d
 
 # ---- switching ----
 
+OWN = [c.NORMAL, c.HOLD, c.HOLD_NO_PV, c.CHARGE]
+"""Every setting the EMS itself makes."""
+
 situations = st.builds(
     sw.Situation,
     mode=st.sampled_from(c.MODES),
     target=st.sampled_from([c.NORMAL, c.HOLD, c.CHARGE]),
-    current=st.sampled_from([c.NORMAL, c.HOLD, c.CHARGE, c.UNREACHABLE, "Anders (VPP / x / 0 W)"]),
+    current=st.sampled_from([*OWN, c.UNREACHABLE, "Anders (VPP / x / 0 W)"]),
     ready=st.booleans(),
-    set_by_ems=st.sampled_from([c.NORMAL, c.HOLD, c.CHARGE]),
-    trigger=st.sampled_from(["soll", "modus", "pruefen"]),
+    set_by_ems=st.sampled_from(OWN),
+    trigger=st.sampled_from(["soll", "modus", "pruefen", "pv"]),
     now=st.just(NOW),
     switch_failed=st.booleans(),
     foreign_reported=st.one_of(
         st.none(), st.builds(sw.ForeignReport, st.just("Anders (VPP / x / 0 W)"), st.just(NOW))
     ),
     inverter_changed_at=st.one_of(st.none(), st.datetimes(timezones=st.just(TZ)).map(lambda t: min(t, NOW))),
+    hold_no_pv=st.booleans(),
 )
+
+
+def wanted(s: sw.Situation) -> str:
+    """What the inverter should end up at: the target, a hold refined by PV, normal when not active."""
+    goal = s.target if s.mode in (c.WITH_APPROVAL, c.AUTOMATIC) else c.NORMAL
+    return c.HOLD_NO_PV if goal == c.HOLD and s.hold_no_pv else goal
 
 
 @given(situations)
@@ -165,23 +178,133 @@ def test_switching_decisions(s):
         assert d.kind is sw.Kind.NOTHING
     if d.kind is sw.Kind.SWITCH:
         assert d.goal != s.current
+        assert d.goal == wanted(s)  # never a hold variant the PV does not call for
         assert not foreign or s.switch_failed  # a foreign setting is never overridden
+    if d.kind is not sw.Kind.NOTHING:
+        assert d.goal in OWN
     if s.mode == c.PLAN_ONLY:
         assert d.kind is sw.Kind.NOTHING or d.goal == c.NORMAL
     if d.kind is sw.Kind.REPORT_FOREIGN:
         assert foreign and not s.switch_failed
 
 
-@given(st.sampled_from([c.NORMAL, c.HOLD, c.CHARGE]), st.floats(0, 50), st.booleans(), st.integers(0, 20000))
-def test_commands_end_with_the_mode_and_respect_the_limit(goal, grid_kw, power, upper):
+@given(situations)
+def test_own_hold_follows_the_pv(s):
+    """While the EMS holds, a change of the PV situation always switches to the other own hold."""
+    if s.mode == c.PLAN_ONLY or s.target != c.HOLD or not s.ready or s.set_by_ems not in c.HOLDS:
+        return
+    s = sw.Situation(**{**s.__dict__, "current": s.set_by_ems})
+    d = sw.decide(s)
+    if s.current == wanted(s):
+        assert d.kind is sw.Kind.NOTHING
+    else:
+        assert d.kind is sw.Kind.SWITCH and d.goal == wanted(s)
+
+
+# A minimal Sungrow: three entities that take the commands one by one.
+inverter_states = st.fixed_dictionaries(
+    {
+        "ems_modus": st.sampled_from([c.SELF_CONSUMPTION, c.FORCED_MODE, "VPP", "External EMS mode"]),
+        "erzwungen": st.sampled_from([c.FORCED_STOP, c.FORCED_CHARGE, "Forced discharge"]),
+        "entladen_max": st.sampled_from([0, 10, 100, 101, 5900]),
+    }
+)
+OWN_SETTINGS = {
+    c.NORMAL: {"ems_modus": c.SELF_CONSUMPTION, "erzwungen": c.FORCED_STOP, "entladen_max": 5900},
+    c.HOLD: {"ems_modus": c.SELF_CONSUMPTION, "erzwungen": c.FORCED_STOP, "entladen_max": 10},
+    c.HOLD_NO_PV: {"ems_modus": c.FORCED_MODE, "erzwungen": c.FORCED_STOP, "entladen_max": 5900},
+    c.CHARGE: {"ems_modus": c.FORCED_MODE, "erzwungen": c.FORCED_CHARGE, "entladen_max": 5900},
+}
+
+
+def run(start: dict, steps: list[sw.Step]) -> list[str]:
+    """The inverter state after each command (index 0: before the first)."""
+    state, seen = (
+        dict(start),
+        [c.inverter_state(start["ems_modus"], start["erzwungen"], start["entladen_max"])],
+    )
+    for x in steps:
+        if x.key in state:
+            state[x.key] = x.value
+        seen.append(c.inverter_state(state["ems_modus"], state["erzwungen"], state["entladen_max"]))
+    return seen
+
+
+goals = st.sampled_from(OWN)
+
+
+@given(inverter_states, goals, st.floats(0, 50), st.booleans(), st.integers(c.HOLD_MAX_W + 1, 20000))
+def test_commands_reach_the_goal_from_any_setting(start, goal, grid_kw, power, upper):
+    """Whatever is set at the inverter (also something foreign or half switched), the commands end at the
+    goal; the executor confirms exactly this."""
     steps = sw.commands_for(goal, grid_kw=grid_kw, power_configured=power, normal_discharge_w=upper)
+    assert run(start, steps)[-1] == goal
     kinds = [(x.kind, x.key) for x in steps]
     assert len(kinds) == len(set(kinds))
     for x in steps:
         if x.key == "ladeleistung_erzwungen":
-            assert x.value <= GRID_KW_MAX * 1000
-    if goal != c.NORMAL:
-        assert steps[-1].key == "ems_modus"  # the mode switches last, after limits and forced mode
+            assert 0 <= x.value <= GRID_KW_MAX * 1000
+
+
+@given(goals, goals, st.integers(c.HOLD_MAX_W + 1, 20000))
+def test_switching_between_own_settings_never_frees_the_battery_on_the_way(start, goal, upper):
+    """If a switch stops after any command (Modbus timeout, restart), a battery that was held or charging
+    is never left free to discharge unless normal operation was the goal; from one hold to the other it
+    stays held throughout."""
+    steps = sw.commands_for(goal, grid_kw=5, power_configured=True, normal_discharge_w=upper)
+    seen = run(OWN_SETTINGS[start] | {"entladen_max": upper if start != c.HOLD else 10}, steps)
+    if start != c.NORMAL and goal != c.NORMAL:
+        assert c.NORMAL not in seen
+    if start in c.HOLDS and goal in c.HOLDS:
+        assert all(x in c.HOLDS for x in seen)
+
+
+START_AT = datetime(2026, 11, 17, 6, 0, tzinfo=TZ)
+pv_readings = st.one_of(
+    st.none(),
+    st.floats(allow_nan=True, allow_infinity=True),
+    st.floats(-10, 400),
+    st.sampled_from([49.9, 50, 150]),
+)
+
+
+@given(pv_readings, st.booleans(), st.one_of(st.none(), st.integers(0, 3 * sw.HOLD_VARIANT_MIN_S)))
+def test_hold_variant_rules(pv_w, no_pv, ago_s):
+    since = None if ago_s is None else START_AT - timedelta(seconds=ago_s)
+    last = sw.HoldVariant(no_pv, since)
+    new = sw.hold_variant(pv_w, last, START_AT)
+    may_change = since is None or ago_s >= sw.HOLD_VARIANT_MIN_S
+    if not may_change:
+        assert new == last
+        return
+    known = pv_w is not None and math.isfinite(pv_w)
+    if not known or pv_w >= sw.PV_FROM_W:
+        assert new.no_pv is False  # unknown or enough PV: the hold that lets PV charge
+    elif pv_w < sw.NO_PV_BELOW_W:
+        assert new.no_pv is True
+    else:
+        assert new.no_pv is no_pv
+    assert (new.since == START_AT) == (new.no_pv != no_pv or since is None)
+
+
+@given(st.lists(pv_readings, min_size=1, max_size=300))
+def test_hold_variant_over_a_day_never_toggles_faster_than_allowed(minutes):
+    """PV read once a minute: the variant changes at most once per HOLD_VARIANT_MIN_S, and a PV signal that
+    stays inside the band changes nothing after the start."""
+    v = sw.HoldVariant()
+    changes = []
+    for i, pv_w in enumerate(minutes):
+        now = START_AT + timedelta(minutes=i)
+        new = sw.hold_variant(pv_w, v, now)
+        if new.since != v.since and v.since is not None:
+            changes.append(now)
+        v = new
+    for a, b in itertools.pairwise(changes):
+        assert (b - a).total_seconds() >= sw.HOLD_VARIANT_MIN_S
+    assert len(changes) <= len(minutes) * 60 // sw.HOLD_VARIANT_MIN_S + 1
+    inside = all(x is not None and sw.NO_PV_BELOW_W <= x < sw.PV_FROM_W for x in minutes[1:])
+    if inside:
+        assert changes == []
 
 
 # ---- prices ----

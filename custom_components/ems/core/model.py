@@ -20,7 +20,8 @@ class Action(StrEnum):
     NORMAL = "n"
     """Self-consumption: charge from PV surplus, cover demand from the battery."""
     HOLD = "h"
-    """Discharge blocked (discharge power ≈ 0). PV surplus still charges the battery."""
+    """Discharge blocked (discharge power ≈ 0). PV surplus still charges the battery; without PV the
+    inverter draws Battery.hold_standby_kw from the grid."""
     GRID_CHARGE = "l"
     """Charge at a fixed power, from PV and grid."""
 
@@ -45,8 +46,11 @@ class Battery:
     efficiency_discharge: float = 0.975
     """Battery → house (AC). Measured 0.975."""
     standby_kw: float = 0.098
-    """Inverter self-consumption while the battery discharges without PV. Measured 98 W.
-    When the battery is held or empty it does not come from the grid (import = consumption)."""
+    """Inverter self-consumption while the battery discharges without PV. Measured 98 W."""
+    hold_standby_kw: float = 0.062
+    """Drawn from the grid on top of consumption while the battery is held without PV (the executor then
+    holds with Forced mode + Stop). Measured 62 W on the test night 16./17.11.2026 (hold with discharge
+    limit: 103 W). With PV the PV covers it."""
     wear_ct: float = 10.0
     """Cost per kWh taken out of the battery."""
     grid_charge_kw: float = 5.0
@@ -69,6 +73,7 @@ BATTERY_OLD_PLANNER = Battery(
     efficiency_grid_charge=0.85**0.5,
     efficiency_discharge=0.85**0.5,
     standby_kw=0.0,
+    hold_standby_kw=0.0,
 )
 """Assumptions of the old Jinja planner (85 % round trip, square root per direction), for cross-checks."""
 
@@ -113,6 +118,8 @@ class Step:
     grid_charged_kwh: float
     """Sent from the grid into the battery (before losses)."""
     cost_ct: float
+    idle_grid_kwh: float = 0.0
+    """Of the import: the inverter's own draw while the battery idles (simulation.idle_standby)."""
 
 
 MIN_HOLD_SLOTS = 2

@@ -31,7 +31,8 @@ The name is honest: on a 10 kWh battery with a dynamic tariff the savings are re
    clouds, forecast errors).
 2. **Simulation** (`core/simulation.py`). Battery physics with gross flows, measured efficiencies
    (PV → battery 98 %, grid → battery 96.1 %, battery → house 97.5 %) and the inverter's standby draw
-   (98 W while discharging without PV). *Hold* is implemented as discharge limit ≈ 0, so PV keeps charging.
+   (98 W while discharging without PV; 62 W from the grid while the battery is held, or full during grid
+   charging, without PV). *Hold* lets PV keep charging; without PV it runs as forced mode + stop.
 3. **Optimizer** (`core/optimizer.py`). Dynamic programming over battery content × time: per quarter hour
    the cheapest of *normal*, *hold*, *grid charge*, including wear (ct per kWh taken out), a residual value
    for the energy left at the end, a 30-minute minimum hold and a small fee per switch against toggling.
@@ -161,7 +162,8 @@ in the store are written once.
 | `number.ems_akku_verschleiss`, `number.ems_netzladeleistung` | wear (ct/kWh), grid charge power (kW) | `fest_in_yaml` |
 
 **How it switches** (Sungrow Modbus entities): hold = self-consumption with the discharge limit at 10 W (PV
-keeps charging); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
+keeps charging), or forced mode + stop while there is no PV (about 40 W less from the grid on the author's
+SH15T; below 50 W PV, back from 150 W, at least 15 min each, needs `pv_leistung`); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
 with the discharge limit back at its maximum. Every command is checked after 60 s. Blocks are run from 30 min
 (hold) / 15 min (grid charge) and 5 ct savings, grid charging stops at 98 %, a plan older than 30 min means
 normal operation.

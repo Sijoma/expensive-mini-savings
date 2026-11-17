@@ -70,7 +70,10 @@ class Measurement:
 
     @property
     def ems_action(self) -> Action | None:
-        """Entsprechende Aktion des EMS, None wenn es keine gibt (f, e)."""
+        """The EMS action this corresponds to, None if there is none (e, v, a, x). Forced mode + Stop (f) is
+        the EMS's hold without PV."""
+        if self.action == "f":
+            return Action.HOLD
         return Action(self.action) if self.action in ("n", "h", "l") else None
 
 

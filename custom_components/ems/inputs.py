@@ -18,6 +18,7 @@ from .const import (
     CONF_EMS_MODE,
     CONF_FORCED,
     CONF_IMPORTED,
+    CONF_PV_POWER,
     CONF_SOC,
 )
 from .inverter import NO_VALUE, InverterSetting, classify
@@ -83,6 +84,13 @@ class Inputs:
     def soc(self) -> float | None:
         """Battery state of charge in % of the usable range."""
         return self.number(CONF_SOC)
+
+    def pv_w(self) -> float | None:
+        """PV power now in W (the entity may report kW); None if not configured or no value."""
+        value = self.number(CONF_PV_POWER)
+        if value is not None and self.attribute(CONF_PV_POWER, "unit_of_measurement") == "kW":
+            return value * 1000
+        return value
 
     def consumed_kwh(self) -> float | None:
         """Total house consumption meter (for the load profile)."""

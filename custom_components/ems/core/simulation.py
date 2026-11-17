@@ -17,6 +17,22 @@ STANDBY_PV_KW = 0.05
 """Below this PV power the battery supplies the inverter (at night)."""
 
 
+def idle_standby(slot: Slot, action: Action, battery: Battery, in_ac: float = 0.0) -> float:
+    """kWh the inverter draws from the grid in this quarter hour because the battery idles without PV:
+    held, or full during grid charging (for the part of the quarter hour it charges nothing; not measured
+    separately, assumed like the hold with Forced mode + Stop). While charging or discharging the
+    inverter's own draw is in the efficiencies, with PV the PV covers it."""
+    if slot.pv_kw >= STANDBY_PV_KW:
+        return 0.0
+    if action is Action.HOLD:
+        return battery.hold_standby_kw * DT_H
+    if action is Action.GRID_CHARGE:
+        full_kwh = battery.grid_charge_kw * DT_H
+        idle = 1.0 - in_ac / full_kwh if full_kwh > 0 else 1.0
+        return battery.hold_standby_kw * DT_H * min(max(idle, 0.0), 1.0)
+    return 0.0
+
+
 def step(e: float, slot: Slot, action: Action, battery: Battery, tariff: Tariff) -> Step:
     """Simulates one quarter hour starting from battery content e (kWh, DC).
 
@@ -41,6 +57,7 @@ def step(e: float, slot: Slot, action: Action, battery: Battery, tariff: Tariff)
         e_new = e + in_ac * eta
         grid_import = part_import + grid_charged
         feed_in = max(part_surplus - in_ac, 0.0)
+        idle = idle_standby(slot, action, battery, in_ac)
     else:
         eta_c = battery.efficiency_charge
         in_ac = max(min(part_surplus, battery.charge_kw * DT_H, (battery.e_max - e) / eta_c), 0.0)
@@ -57,9 +74,16 @@ def step(e: float, slot: Slot, action: Action, battery: Battery, tariff: Tariff)
         e_new = e_charged - discharged
         grid_import = part_import - out_ac
         feed_in = part_surplus - in_ac
+        idle = idle_standby(slot, action, battery)
 
+    # PV surplus that would go to the grid covers the inverter's idle draw first
+    covered = min(idle, feed_in)
+    feed_in -= covered
+    grid_import += idle - covered
     cost = grid_import * slot.price_ct - feed_in * tariff.feed_in_ct + discharged * battery.wear_ct
-    return Step(action, e, e_new, grid_import, feed_in, discharged, standby, grid_charged, cost)
+    return Step(
+        action, e, e_new, grid_import, feed_in, discharged, standby, grid_charged, cost, idle - covered
+    )
 
 
 def usable_per_kwh(load_kw: float, battery: Battery) -> float:
@@ -135,8 +159,15 @@ def step_vector(
         in_ac = np.maximum(np.minimum(battery.grid_charge_kw * DT_H, (battery.e_max - e) / eta), 0.0)
         from_grid = np.maximum(in_ac - part_surplus, 0.0)
         e_new = e + in_ac * eta
-        cost = (part_import + from_grid) * slot.price_ct - np.maximum(
-            part_surplus - in_ac, 0.0
+        if slot.pv_kw >= STANDBY_PV_KW or battery.grid_charge_kw * DT_H <= 0:
+            idle = np.full_like(e, idle_standby(slot, action, battery))
+        else:
+            share = np.clip(1.0 - in_ac / (battery.grid_charge_kw * DT_H), 0.0, 1.0)
+            idle = battery.hold_standby_kw * DT_H * share
+        feed_in = np.maximum(part_surplus - in_ac, 0.0)
+        covered = np.minimum(idle, feed_in)
+        cost = (part_import + from_grid + idle - covered) * slot.price_ct - (
+            feed_in - covered
         ) * tariff.feed_in_ct
         return e_new, cost
     eta_c = battery.efficiency_charge
@@ -154,9 +185,11 @@ def step_vector(
         out_ac = np.zeros_like(e)
         discharged = out_ac
     e_new = e_charged - discharged
+    feed_in = part_surplus - in_ac
+    covered = np.minimum(idle_standby(slot, action, battery), feed_in)
     cost = (
-        (part_import - out_ac) * slot.price_ct
-        - (part_surplus - in_ac) * tariff.feed_in_ct
+        (part_import - out_ac + idle_standby(slot, action, battery) - covered) * slot.price_ct
+        - (feed_in - covered) * tariff.feed_in_ct
         + discharged * battery.wear_ct
     )
     return e_new, cost
@@ -173,7 +206,8 @@ def flows(step_: Step, slot: Slot, battery: Battery) -> dict[str, float]:
     in_ac_kwh = max((step_.e_after - step_.e_before + step_.discharged_kwh) / eta_in, 0.0)
     grid_battery = min(step_.grid_charged_kwh, in_ac_kwh)
     battery_house = max((step_.discharged_kwh - step_.standby_kwh) * battery.efficiency_discharge, 0.0)
-    grid_house = max(step_.import_kwh - grid_battery, 0.0)
+    # the inverter's own draw while idle is not consumption (like the battery's standby above)
+    grid_house = max(step_.import_kwh - grid_battery - step_.idle_grid_kwh, 0.0)
     load = slot.load_kw * DT_H
     return {
         k: round(v / DT_H, 2)

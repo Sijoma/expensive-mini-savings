@@ -1393,6 +1393,7 @@ pumpe`,"Akku"]:["Wärmepumpe","Akku"],axisTick:{show:!1},axisLine:{show:!1},axis
         <li>Ohne deine Entscheidung gilt „Nur planen“.</li>
         <li>Gefragt wird nur bei Aktionen, die mindestens 5 ct sparen.</li>
         <li>„Entladung gesperrt“ heißt: Der Akku gibt nichts ab, die PV lädt ihn weiter.</li>
+        <li>Ohne PV (nachts) sperrt das EMS anders, dann zieht der Wechselrichter weniger Strom aus dem Netz.</li>
         <li>Ist der Plan älter als 30 Minuten, läuft der Akku normal.</li>
         <li>Stellt jemand anderes den Wechselrichter um, greift das EMS nicht ein.</li>
         <li>Jeder Schaltbefehl wird nach einer Minute geprüft; Fehler kommen als Nachricht aufs Handy.</li>

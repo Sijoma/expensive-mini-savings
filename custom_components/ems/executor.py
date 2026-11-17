@@ -147,6 +147,8 @@ class Executor:
         settings.bind(self.state)
         self.target = c.NORMAL
         self.target_since = dt_util.now()
+        self.hold = sw.HoldVariant()
+        """Which hold runs while the target is HOLD (with or without PV); not stored, decided anew."""
         self.is_pending = False
         self.pending_since: datetime | None = None
         self._lock = asyncio.Lock()
@@ -179,7 +181,7 @@ class Executor:
             await self.store.async_save(self.state)  # right away: a reload must not start it twice
         if self.state["archive"].get("since") == self._backfilled_at:
             await self.store.async_save(self.state)  # right away: a reload must not backfill twice
-        self.target = self.state.get("set_by_ems") or c.NORMAL
+        self.target = c.as_target(self.state.get("set_by_ems") or c.NORMAL)
         self.settings.bind(self.state)
 
     def _start_ledger(self) -> None:
@@ -271,6 +273,9 @@ class Executor:
             # no plan yet since start: keep what runs (no switching back and forth during a restart)
             return
         now = dt_util.now()
+        hold, self.hold = self.hold, sw.hold_variant(self.inputs.pv_w(), self.hold, now)
+        if hold.no_pv != self.hold.no_pv and self.target == c.HOLD:
+            self.hass.async_create_task(self.apply("pv"))
         blocks = self.coordinator.latest_blocks()
         new = c.target(
             self.mode, blocks, _ms(now), self.coordinator.plan_fresh(now), self.approval, self.target,
@@ -422,6 +427,7 @@ class Executor:
             switch_failed=bool(self.state.get("switch_failed")),
             foreign_reported=sw.ForeignReport.from_dict(self.state.get("foreign_reported")),
             inverter_changed_at=reading.changed_at,
+            hold_no_pv=self.hold.no_pv,
         )
         decision = sw.decide(situation)
         if decision.kind is sw.Kind.NOTHING:
@@ -514,6 +520,12 @@ class Executor:
     async def _switched(self, current: str, goal: str, active: bool) -> None:
         now = dt_util.now()
         self.state["set_by_ems"] = goal
+        if current in c.HOLDS and goal in c.HOLDS:
+            # the same hold, now with or without PV: the block keeps running (no booking, no push)
+            why = "keine PV" if goal == c.HOLD_NO_PV else "PV liefert"
+            self.log("Geschaltet", f"{current} → {goal} ({why})")
+            self._changed()
+            return
         counters = self.inputs.counters()
         record = self.state.get("running_block")
         if record and record.get("action") in ("h", "l"):
@@ -521,7 +533,7 @@ class Executor:
             self._book(record, kwh, eur, now)
             self.state["running_block"] = None
         block = None
-        if goal in (c.HOLD, c.CHARGE):
+        if goal in c.CODE:
             code = c.CODE[goal]
             block = next(
                 (
@@ -552,7 +564,7 @@ class Executor:
                 data["entity_id"] = self.target_entity_id
             await self.hass.services.async_call("logbook", "log", data, blocking=False)
         if self.mode == c.AUTOMATIC and goal != c.NORMAL:
-            await self.notify("🔋 EMS", f"{goal} {section}".strip(), tag="ems-akku-info")
+            await self.notify("🔋 EMS", f"{c.as_target(goal)} {section}".strip(), tag="ems-akku-info")
 
     def _book(self, record: dict[str, Any], kwh: float, eur: float, now: datetime) -> None:
         """Note a finished block with its measured quantity and what the plan expected of it. A record of

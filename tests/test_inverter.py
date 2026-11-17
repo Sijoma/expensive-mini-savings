@@ -14,7 +14,7 @@ MODES = [c.SELF_CONSUMPTION, c.FORCED_MODE, "VPP", "External EMS mode", None, "u
 FORCED = [c.FORCED_STOP, c.FORCED_CHARGE, "Forced discharge", None, "unknown"]
 DISCHARGE = [5900.0, 101.0, 100.0, 10.0, 0.0, -5.0, None]
 
-EXECUTOR_TERM = {"n": c.NORMAL, "h": c.HOLD, "l": c.CHARGE, "x": c.UNREACHABLE}
+EXECUTOR_TERM = {"n": c.NORMAL, "h": c.HOLD, "f": c.HOLD_NO_PV, "l": c.CHARGE, "x": c.UNREACHABLE}
 
 
 @pytest.mark.parametrize(("mode", "forced", "discharge"), list(product(MODES, FORCED, DISCHARGE)))

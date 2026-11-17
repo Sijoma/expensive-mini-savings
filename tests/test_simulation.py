@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 
 from conftest import load_case, scenario
 from ems.core.model import BATTERY_OLD_PLANNER, DT_H, Action, Battery, Slot, Tariff
-from ems.core.simulation import simulate, step, step_vector
+from ems.core.simulation import STANDBY_PV_KW, idle_standby, simulate, step, step_vector
 
 EPS = 1e-9
 
@@ -36,12 +36,34 @@ def test_no_standby_from_battery_during_day(battery, tariff):
     assert s.discharged_kwh == pytest.approx(0.5 / battery.efficiency_discharge)
 
 
-def test_held_no_standby(battery, tariff):
-    """Measured: when the battery is held or empty, grid import equals consumption."""
+def test_held_without_pv_draws_the_inverter_from_the_grid(battery, tariff):
+    """Measured on the test night 16./17.11.2026: held with Forced mode + Stop, the grid supplies the
+    consumption plus about 62 W for the inverter; nothing comes from the battery."""
     (slot,) = scenario((1, 50, 0.0, 2.0))
     s = step(5.0, slot, Action.HOLD, battery, tariff)
     assert s.standby_kwh == 0
-    assert s.import_kwh == pytest.approx(0.5)
+    assert s.discharged_kwh == 0
+    assert s.import_kwh == pytest.approx(0.5 + 0.062 * DT_H)
+
+
+def test_held_with_pv_draws_nothing_extra(battery, tariff):
+    """With PV the PV covers the inverter: import is the part of consumption PV does not cover."""
+    (slot,) = scenario((1, 50, 0.5, 2.0))
+    s = step(5.0, slot, Action.HOLD, battery, tariff)
+    assert s.import_kwh == pytest.approx((2.0 - 0.5) * DT_H)
+
+
+def test_full_battery_in_grid_charge_idles_like_a_hold(battery, tariff):
+    """Nothing to charge: the inverter idles, the same draw as a hold, so showing it as a hold
+    (explanation.hold_when_full) costs exactly the same."""
+    (slot,) = scenario((1, 30, 0.0, 1.0))
+    charge = step(battery.e_max, slot, Action.GRID_CHARGE, battery, tariff)
+    hold = step(battery.e_max, slot, Action.HOLD, battery, tariff)
+    assert charge.import_kwh == pytest.approx(hold.import_kwh)
+    assert charge.cost_ct == pytest.approx(hold.cost_ct)
+    # charging at full power: the draw is in the efficiency, nothing extra
+    charging = step(0.0, slot, Action.GRID_CHARGE, battery, tariff)
+    assert charging.import_kwh == pytest.approx(1.0 * DT_H + battery.grid_charge_kw * DT_H)
 
 
 def test_small_night_load_is_expensive(battery):
@@ -70,8 +92,8 @@ def test_hold_keeps_the_content(battery, tariff):
     (slot,) = scenario((1, 50, 0.0, 2.0))
     s = step(5.0, slot, Action.HOLD, battery, tariff)
     assert s.e_after == 5.0
-    assert s.import_kwh == pytest.approx(0.5)
-    assert s.cost_ct == pytest.approx(25.0)
+    assert s.import_kwh == pytest.approx(0.5 + battery.hold_standby_kw * DT_H)
+    assert s.cost_ct == pytest.approx(25.0 + battery.hold_standby_kw * DT_H * 50)
 
 
 def test_hold_lets_pv_charge(battery, tariff):
@@ -186,7 +208,7 @@ def test_wrong_length_is_rejected(battery, tariff):
 
 slot_st = st.tuples(
     st.floats(-10, 100),  # Preis ct
-    st.floats(0, 15),  # PV kW
+    st.one_of(st.just(0.0), st.floats(0, 0.1), st.floats(0, 15)),  # PV kW (often night or dawn)
     st.floats(0, 12),  # Verbrauch kW
     st.one_of(st.just(0.0), st.floats(0, 3)),  # Spitze kW
 )
@@ -222,7 +244,11 @@ def test_energy_balance(plan):
         )
         in_ac_kwh = (s.e_after - s.e_before + s.discharged_kwh) / eta_in
         grid = s.import_kwh - s.feed_in_kwh
-        assert grid == pytest.approx((slot.load_kw - slot.pv_kw) * DT_H + in_ac_kwh - out_ac_kwh, abs=1e-9)
+        idle = idle_standby(slot, s.action, battery, in_ac_kwh)
+        assert grid == pytest.approx(
+            (slot.load_kw - slot.pv_kw) * DT_H + in_ac_kwh - out_ac_kwh + idle, abs=1e-9
+        )
+        assert -EPS <= s.idle_grid_kwh <= idle + EPS
         assert s.import_kwh >= -EPS and s.feed_in_kwh >= -EPS and in_ac_kwh >= -EPS
         if slot.spike_kw == 0:  # without a spike never import and export at the same time
             assert not (s.import_kwh > EPS and s.feed_in_kwh > EPS)
@@ -286,7 +312,10 @@ def test_slot_is_immutable():
     assert isinstance(slot, Slot)
 
 
-@given(slot_st, st.sampled_from(list(Action)), st.lists(st.floats(0, 11), min_size=1, max_size=20))
+contents_st = st.lists(st.one_of(st.floats(0, 11), st.just(Battery().e_max)), min_size=1, max_size=20)
+
+
+@given(slot_st, st.sampled_from(list(Action)), contents_st)
 def test_vector_matches_scalar(raw, action, contents):
     """The optimizer uses step_vector, the valuation uses step: both must agree."""
     (slot,) = scenario((1, *raw))
@@ -296,3 +325,47 @@ def test_vector_matches_scalar(raw, action, contents):
         s = step(e, slot, action, battery, tariff)
         assert e_new[i] == pytest.approx(s.e_after, abs=1e-12)
         assert cost[i] == pytest.approx(s.cost_ct, abs=1e-9)
+
+
+@given(slot_st, st.floats(0, 11), st.floats(0, 10))
+def test_hold_draws_exactly_its_standby_and_only_without_pv(raw, e, hold_kw):
+    """Held, the grid supplies what PV does not cover, plus the inverter's draw when there is no PV (less
+    what a tiny PV surplus covers); the battery gives nothing."""
+    (slot,) = scenario((1, *raw))
+    battery = Battery(hold_standby_kw=hold_kw)
+    held = step(e, slot, Action.HOLD, battery, Tariff())
+    free = step(e, slot, Action.HOLD, replace(battery, hold_standby_kw=0.0), Tariff())
+    assert held.discharged_kwh == 0 and held.e_after >= min(e, battery.e_max) - EPS
+    extra = held.import_kwh - free.import_kwh
+    standby = hold_kw * DT_H if slot.pv_kw < STANDBY_PV_KW else 0.0
+    # surplus that would be fed in covers the draw first, the grid the rest
+    covered = free.feed_in_kwh - held.feed_in_kwh
+    assert covered == pytest.approx(min(standby, free.feed_in_kwh), abs=1e-12)
+    assert extra == pytest.approx(standby - covered, abs=1e-12)
+    assert held.idle_grid_kwh == pytest.approx(extra, abs=1e-12)
+    assert held.e_after == free.e_after
+
+
+@given(slot_st)
+def test_full_battery_waits_the_same_in_grid_charge_and_hold(raw):
+    """Grid charging a full battery charges nothing: it costs exactly what a hold costs (the plan shows
+    that part as hold, and the executor holds when full)."""
+    (slot,) = scenario((1, *raw))
+    battery, tariff = Battery(), Tariff()
+    charge = step(battery.e_max, slot, Action.GRID_CHARGE, battery, tariff)
+    hold = step(battery.e_max, slot, Action.HOLD, battery, tariff)
+    assert charge.import_kwh == pytest.approx(hold.import_kwh, abs=1e-12)
+    assert charge.cost_ct == pytest.approx(hold.cost_ct, abs=1e-9)
+    assert charge.e_after == pytest.approx(hold.e_after, abs=1e-12)
+
+
+@given(slot_st, contents_st)
+def test_idle_draw_never_exceeds_the_hold_draw(raw, contents):
+    """Grid charging draws the idle standby only for the part of the quarter hour it does not charge."""
+    (slot,) = scenario((1, *raw))
+    battery = Battery()
+    for e in contents:
+        s = step(e, slot, Action.GRID_CHARGE, battery, Tariff())
+        in_ac = (s.e_after - s.e_before) / battery.efficiency_grid_charge
+        idle = idle_standby(slot, Action.GRID_CHARGE, battery, in_ac)
+        assert -EPS <= idle <= battery.hold_standby_kw * DT_H + EPS

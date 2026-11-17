@@ -29,8 +29,18 @@ from .inverter import (  # noqa: F401  (option names are part of control's inter
 NORMAL = "Eigenverbrauch"
 HOLD = "Entladung gesperrt"
 CHARGE = "Laden aus dem Netz"
+HOLD_NO_PV = "Entladung gesperrt (ohne PV)"
+"""How a hold runs while there is no PV: Forced mode + Stop. The target stays HOLD; only the setting at
+the inverter differs (switching.hold_variant decides which one)."""
+HOLDS = (HOLD, HOLD_NO_PV)
 NAME = {"h": HOLD, "l": CHARGE}
-CODE = {HOLD: "h", CHARGE: "l"}
+CODE = {HOLD: "h", HOLD_NO_PV: "h", CHARGE: "l"}
+
+
+def as_target(setting: str) -> str:
+    """The target an executor setting belongs to (both hold variants are the target HOLD)."""
+    return HOLD if setting == HOLD_NO_PV else setting
+
 
 PLAN_ONLY = "Nur planen"
 WITH_APPROVAL = "Mit Freigabe"
@@ -225,12 +235,15 @@ def withdraw(now: datetime, approval: Approval) -> Approval:
 # ---- inverter ---------------------------------------------------------------------------------
 
 HOLD_DISCHARGE_W = 10
-"""Discharge limit for a hold: the minimum of the SBH battery; PV surplus keeps charging."""
+"""Discharge limit for a hold: the minimum of the SBH battery; PV surplus keeps charging. The inverter
+then draws about 100 W from the grid (test night 16./17.11.2026), Forced mode + Stop (HOLD_NO_PV) about
+60 W, but that one does not charge from PV either."""
 UNREACHABLE = "Nicht erreichbar"
 """The inverter's mode entities report no value (integration down, Modbus timeout)."""
 STATE = {
     InverterSetting.NORMAL: NORMAL,
     InverterSetting.HOLD: HOLD,
+    InverterSetting.OLD_HOLD: HOLD_NO_PV,
     InverterSetting.CHARGE: CHARGE,
     InverterSetting.UNREACHABLE: UNREACHABLE,
 }
