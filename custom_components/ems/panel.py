@@ -51,6 +51,8 @@ OWN = {
     "lastprofil": ("sensor", "ems_lastprofil"),
     "verschleiss": ("number", "ems_akku_verschleiss"),
     "netzladeleistung": ("number", "ems_netzladeleistung"),
+    "wp_modus": ("select", "ems_modus_waermepumpe"),
+    "wp_soll": ("sensor", "ems_waermepumpe_soll"),
 }
 """App key → the integration's own executor entities. An input set in the configuration takes precedence
 (lastprofil, verschleiss, netzladeleistung, soll)."""

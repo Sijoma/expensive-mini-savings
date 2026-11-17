@@ -33,12 +33,14 @@ from homeassistant.util import dt as dt_util
 
 from . import archive, shadow
 from . import control as c
+from . import heat_pump_executor as hpx
 from . import switching as sw
 from .adapter import PlanBlock
 from .const import (
     CONF_FEED_IN_CT,
     CONF_FORCED_POWER,
     CONF_NOTIFY,
+    CONF_WP_BOOST,
     DOMAIN,
     GRID_KW_DEFAULT,
     SIGNAL_EXECUTOR,
@@ -94,6 +96,7 @@ def empty_state() -> dict[str, Any]:
         "requested_at": None,
         "switch_failed": False,
         "foreign_reported": None,
+        "heat_pump": hpx.empty_state(),
     }
 
 
@@ -158,6 +161,8 @@ class Executor:
         self.archive_folder = Path(hass.config.path("ems"))
         self._backfilled_at: str | None = None
         """Set by the target sensor; used for logbook entries."""
+        self.heat_pump = hpx.HeatPumpExecutor(self) if conf.get(CONF_WP_BOOST) else None
+        """The PV boost of the heat pump over SG Ready; only with wp_verstaerkt configured."""
 
     # ---- persistence ----
 
@@ -253,6 +258,12 @@ class Executor:
         self._unsub.append(
             async_track_state_change_event(h, self.inputs.inverter_entities(), self._inverter_changed)
         )
+        if self.heat_pump:
+            hp_ = self.heat_pump
+            self._unsub += [
+                async_track_state_change_event(h, self.inputs.power_entities(), hp_.power_changed),
+                async_track_state_change_event(h, self.inputs.heat_pump_entities(), self._inverter_changed),
+            ]
         self.evaluate()
         self._remember_meter()
         async_dispatcher_send(h, SIGNAL_EXECUTOR)
@@ -326,6 +337,8 @@ class Executor:
 
     @callback
     def _every_minute(self, now: datetime) -> None:
+        if self.heat_pump:
+            self.heat_pump.every_minute(now)
         self.evaluate()
         async_dispatcher_send(self.hass, SIGNAL_EXECUTOR)
         self.hass.async_create_task(self._maybe_request(now))
@@ -495,13 +508,17 @@ class Executor:
 
     async def _confirmed(self, goal: str) -> bool:
         """Wait until the inverter reports the goal (at most CONFIRM_S)."""
-        if self.inverter() == goal:
+        return await self.wait_for(self.inputs.inverter_entities(), lambda: self.inverter() == goal)
+
+    async def wait_for(self, entities: list[str], check: Callable[[], bool]) -> bool:
+        """Wait until `check` holds after a change of these entities (at most CONFIRM_S)."""
+        if check():
             return True
         done: asyncio.Future[bool] = self.hass.loop.create_future()
 
         @callback
         def changed(_event: Event) -> None:
-            if self.inverter() == goal and not done.done():
+            if check() and not done.done():
                 done.set_result(True)
 
         @callback
@@ -509,7 +526,7 @@ class Executor:
             if not done.done():
                 done.set_result(False)
 
-        unsub = async_track_state_change_event(self.hass, self.inputs.inverter_entities(), changed)
+        unsub = async_track_state_change_event(self.hass, entities, changed)
         cancel = async_call_later(self.hass, CONFIRM_S, timeout)
         try:
             return await done

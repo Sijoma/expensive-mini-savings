@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import itertools
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from hypothesis import given
+from hypothesis import event, given, settings
 from hypothesis import strategies as st
 
 from custom_components.ems import control as c
+from custom_components.ems import heat_pump_control as hp
 from custom_components.ems import switching as sw
 from custom_components.ems.adapter import PlanBlock, price_at, prices_from_tibber
 from custom_components.ems.const import GRID_KW_MAX
@@ -329,3 +330,175 @@ def test_any_tibber_response_gives_a_sorted_price_list(response):
     prices = prices_from_tibber(response)
     assert prices == sorted(prices)
     assert all(isinstance(t, int) and isinstance(p, float) for t, p in prices)
+
+
+# ---- heat pump PV boost ----
+# The rules of the former automation, written out here (not taken from the module, so a changed constant
+# fails): on after 10 min of export > 1200 W or charging > 2500 W, 09:00–16:30, battery > 80 %, 30 min
+# pause; off after 5 min of import or discharge > 300 W, at 17:00 at the latest.
+ON_FROM, ON_UNTIL, OFF_AT = time(9), time(16, 30), time(17)
+
+DAY_START = datetime(2026, 11, 17, 0, 0, tzinfo=TZ)
+# (grid W, battery W) of a phase; a little noise around the thresholds
+PHASES = {
+    "export": (st.floats(-3000, -1150), st.floats(-500, 200)),
+    "charge": (st.floats(-1300, 100), st.floats(-3500, -2450)),
+    "import": (st.floats(250, 2000), st.floats(-100, 100)),
+    "discharge": (st.floats(-200, 200), st.floats(250, 2000)),
+    "quiet": (st.floats(-400, 400), st.floats(-400, 400)),
+    "missing": (st.none(), st.none()),
+}
+
+
+@st.composite
+def phase(draw):
+    kind = draw(st.sampled_from(["export", "export", "export", "charge", "charge", *sorted(PHASES)]))
+    grid, battery = PHASES[kind]
+    soc = draw(st.sampled_from([95, 95, 95, 80.1, 80, 79.9, 50, None]) | st.floats(0, 100))
+    program = draw(st.booleans() | st.just(True))
+    return [(draw(grid), draw(battery), soc, program) for _ in range(draw(st.integers(1, 40)))]
+
+
+minutes_of_day = st.lists(phase(), min_size=1, max_size=12).map(lambda ps: [m for p in ps for m in p])
+start_minutes = st.one_of(
+    st.sampled_from(
+        [8 * 60 + 40, 9 * 60, 11 * 60, 12 * 60, 14 * 60, 16 * 60 + 10, 16 * 60 + 25, 16 * 60 + 40]
+    ),
+    st.integers(0, 24 * 60 - 1),
+)
+
+
+@settings(max_examples=400)
+@given(start_minutes, minutes_of_day, st.booleans())
+def test_heat_pump_boost_follows_the_rules_over_a_day(start_min, minutes, foreign_start):
+    """Closed loop, one reading per minute, every switch confirmed at once. Checks the automation's rules from
+    the trace itself: a boost starts only after 10 min of surplus, between 9:00 and 16:30, above 80 %, in
+    the normal program and 30 min after the last one; it ends after 5 min of import or discharge and at
+    17:00; a boost the EMS did not set is never touched."""
+    timers, boosted, changed_at, own = hp.Timers(), foreign_start, None, False
+    history: list[tuple[float | None, float | None]] = []
+    for i, (grid, battery, soc, program) in enumerate(minutes):
+        now = DAY_START + timedelta(minutes=start_min + i)
+        r = hp.Readings(
+            now=now, grid_w=grid, battery_w=battery, soc=soc, boosted=boosted, blocked=False,
+            boosted_changed_at=changed_at, operating_mode="program" if program else "comfort",
+            operating_mode_required="program",
+        )  # fmt: skip
+        history.append((grid, battery))
+        timers = hp.advance(timers, r)
+        d = hp.decide(hp.Situation(hp.AUTOMATIC, r, timers, own, "pruefen"))
+        if foreign_start and boosted and not own:
+            assert d.kind in (hp.Kind.NOTHING, hp.Kind.REPORT_FOREIGN)  # never touched
+            continue
+        t = now.time()
+        if own:
+            last6 = history[-6:]
+            must_end = (t >= OFF_AT or t < ON_FROM) or (
+                len(last6) == 6
+                and (
+                    all(g is not None and g > 300 for g, _ in last6)
+                    or all(b is not None and b > 300 for _, b in last6)
+                )
+            )
+            assert (d.kind is hp.Kind.SWITCH and not d.on) == must_end  # ends exactly when it must
+        if d.kind is not hp.Kind.SWITCH:
+            continue
+        if d.on:
+            assert ON_FROM <= t < ON_UNTIL
+            assert soc is not None and soc > 80 and program
+            last11 = history[-11:]  # high at 11 readings = 10 min
+            assert len(last11) == 11
+            assert all(g is not None and -g > 1200 for g, _ in last11) or all(
+                b is not None and -b > 2500 for _, b in last11
+            )
+            assert changed_at is None or (now - changed_at).total_seconds() >= 30 * 60
+        else:
+            last6 = history[-6:]
+            late = t >= OFF_AT or t < ON_FROM
+            assert late or (
+                len(last6) == 6
+                and (
+                    all(g is not None and g > 300 for g, _ in last6)
+                    or all(b is not None and b > 300 for _, b in last6)
+                )
+            )
+        assert d.on != boosted
+        event("boost on" if d.on else "boost off")
+        boosted, own, changed_at = d.on, d.on, now
+
+
+@given(start_minutes, minutes_of_day)
+def test_heat_pump_plan_only_never_switches(start_min, minutes):
+    timers = hp.Timers()
+    for i, (grid, battery, soc, _) in enumerate(minutes):
+        r = hp.Readings(DAY_START + timedelta(minutes=start_min + i), grid, battery, soc, False, False)
+        timers = hp.advance(timers, r)
+        assert hp.decide(hp.Situation(hp.PLAN_ONLY, r, timers, False, "pruefen")).kind is hp.Kind.NOTHING
+
+
+switches = st.fixed_dictionaries(
+    {"wp_sg_ready": st.booleans(), "wp_verstaerkt": st.booleans(), "wp_sperre": st.booleans()}
+)
+
+
+@given(switches, st.booleans(), st.booleans(), st.booleans())
+def test_heat_pump_commands_reach_the_goal_and_never_block(start, on, sg_ready, block):
+    """From any switch state the commands end at the goal (boost on/off, block off when configured), and no
+    command ever switches the block on or leaves SG Ready off for a boost."""
+    state = dict(start)
+    for x in hp.commands(on, sg_ready=sg_ready, block=block):
+        assert not (x.key == "wp_sperre" and x.value)
+        state[x.key] = x.value
+    assert state["wp_verstaerkt"] is on
+    if block:
+        assert state["wp_sperre"] is False
+    if on and sg_ready:
+        assert state["wp_sg_ready"] is True
+
+
+def run_boost(start: datetime, minutes: list[tuple[float | None, float | None]], soc: float = 95):
+    """Closed loop in "Automatisch"; returns the minutes at which the boost went on and off."""
+    timers, boosted, changed_at, own, ons, offs = hp.Timers(), False, None, False, [], []
+    for i, (grid, battery) in enumerate(minutes):
+        now = start + timedelta(minutes=i)
+        r = hp.Readings(now, grid, battery, soc, boosted, False, changed_at, "program", "program")
+        timers = hp.advance(timers, r)
+        d = hp.decide(hp.Situation(hp.AUTOMATIC, r, timers, own, "pruefen"))
+        if d.kind is hp.Kind.SWITCH:
+            (ons if d.on else offs).append(now)
+            boosted, own, changed_at = d.on, d.on, now
+    return ons, offs
+
+
+STRICT = {
+    "export": (st.floats(-3000, -1201), st.floats(-500, 200)),
+    "import": (st.floats(301, 2000), st.floats(-100, 100)),
+}
+"""Phases clearly beyond the thresholds (no noise across them)."""
+
+
+def flat(kind: str, n: int, draw) -> list[tuple[float | None, float | None]]:
+    grid, battery = STRICT[kind]
+    return [(draw(grid), draw(battery)) for _ in range(n)]
+
+
+@given(st.data(), st.integers(11, 40), st.integers(6, 20), st.integers(1, 60))
+def test_heat_pump_waits_30_min_after_a_boost(data, n_export, n_import, n_again):
+    """Export, then import (the boost ends), then export again: the next boost never comes within 30 min."""
+    minutes = [*flat("export", n_export, data.draw), *flat("import", n_import, data.draw)]
+    minutes += flat("export", n_again, data.draw)
+    ons, offs = run_boost(DAY_START.replace(hour=10), minutes)
+    assert len(ons) >= 1 and len(offs) >= 1
+    for off in offs:
+        assert all(not off < on < off + timedelta(minutes=30) for on in ons)  # the spec, not 30 * 60
+
+
+@given(st.data(), st.integers(0, 29), st.integers(1, 240))
+def test_heat_pump_boost_ends_at_17_at_the_latest(data, start_min, n):
+    """A boost started in the afternoon and kept up by surplus is over by 17:00."""
+    start = DAY_START.replace(hour=16) + timedelta(minutes=start_min) - timedelta(minutes=11)
+    ons, offs = run_boost(start, flat("export", 11 + n, data.draw))
+    assert ons and ons[0].time() < time(16, 30)
+    end = start + timedelta(minutes=11 + n - 1)
+    if end.time() >= time(17) or end.date() > start.date():
+        assert offs and offs[0] <= DAY_START.replace(hour=17)

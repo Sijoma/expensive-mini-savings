@@ -44,7 +44,12 @@
           "ablehnen": "Skript: ablehnen",
           "ersparnis": "Gemessene Ersparnis (Sensor in EUR, Attribut aktionen)",
           "ersparnis_prognose": "Prognostizierte Ersparnis (Sensor in EUR)",
-          "protokoll": "Protokoll (Sensor, Attribut eintraege)"
+          "protokoll": "Protokoll (Sensor, Attribut eintraege)",
+          "wp_sg_ready": "Wärmepumpe: SG Ready aktiv (Schalter)",
+          "wp_verstaerkt": "Wärmepumpe: SG-Ready-Eingang „verstärkt“ (Stiebel: Eingang 1). Ohne ihn schaltet das EMS die Wärmepumpe nicht",
+          "wp_sperre": "Wärmepumpe: SG-Ready-Eingang „Sperre“ (Stiebel: Eingang 2), wird nur ausgeschaltet",
+          "wp_betriebsart": "Wärmepumpe: Betriebsart (PV-Boost nur im normalen Programm)",
+          "wp_betriebsart_normal": "Wert der normalen Betriebsart (Stiebel: program)"
         }
       }
     },
@@ -98,7 +103,12 @@
           "ablehnen": "Skript: ablehnen",
           "ersparnis": "Gemessene Ersparnis (Sensor in EUR, Attribut aktionen)",
           "ersparnis_prognose": "Prognostizierte Ersparnis (Sensor in EUR)",
-          "protokoll": "Protokoll (Sensor, Attribut eintraege)"
+          "protokoll": "Protokoll (Sensor, Attribut eintraege)",
+          "wp_sg_ready": "Wärmepumpe: SG Ready aktiv (Schalter)",
+          "wp_verstaerkt": "Wärmepumpe: SG-Ready-Eingang „verstärkt“ (Stiebel: Eingang 1). Ohne ihn schaltet das EMS die Wärmepumpe nicht",
+          "wp_sperre": "Wärmepumpe: SG-Ready-Eingang „Sperre“ (Stiebel: Eingang 2), wird nur ausgeschaltet",
+          "wp_betriebsart": "Wärmepumpe: Betriebsart (PV-Boost nur im normalen Programm)",
+          "wp_betriebsart_normal": "Wert der normalen Betriebsart (Stiebel: program)"
         }
       }
     },

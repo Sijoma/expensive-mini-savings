@@ -35,6 +35,17 @@ CONF_CHARGED_PV = "akku_ladung_pv"
 CONF_IMPORTED = "netzbezug"
 CONF_CONSUMED = "verbrauch"
 CONF_NOTIFY = "benachrichtigung"
+CONF_WP_SG_READY = "wp_sg_ready"
+"""Heat pump: switch that enables SG Ready (Stiebel ISG: "SG Ready aktiv")."""
+CONF_WP_BOOST = "wp_verstaerkt"
+"""Heat pump: SG Ready input for boosted operation (Stiebel ISG: input 1 = state 3). Without it the EMS
+does not control the heat pump."""
+CONF_WP_BLOCK = "wp_sperre"
+"""Heat pump: SG Ready input that blocks (Stiebel ISG: input 2 = state 1); only ever switched off."""
+CONF_WP_MODE = "wp_betriebsart"
+"""Heat pump: operating mode select; a boost starts only while it is CONF_WP_MODE_NORMAL."""
+CONF_WP_MODE_NORMAL = "wp_betriebsart_normal"
+WP_MODE_NORMAL_DEFAULT = "program"
 """Notify service for approval requests and alerts, e.g. notify.my_phone. Without it no push."""
 CONF_WEAR_CT = "verschleiss_ct"
 CONF_GRID_KW = "netzladeleistung_kw"
@@ -107,12 +118,21 @@ MEASUREMENT_KEYS = (
 )
 EXECUTOR_KEYS = (CONF_FORCED_POWER, CONF_CHARGED, CONF_CHARGED_PV, CONF_IMPORTED, CONF_CONSUMED)
 """Inverter setting and meters the executor uses (it switches via ems_modus, erzwungen, entladen_max)."""
-ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *EXECUTOR_KEYS)
+HEAT_PUMP_KEYS = (CONF_WP_SG_READY, CONF_WP_BOOST, CONF_WP_BLOCK, CONF_WP_MODE)
+"""SG Ready switches and operating mode of the heat pump (optional; the EMS switches the PV boost when
+wp_verstaerkt is set)."""
+ENTITY_KEYS = (*PLANNER_KEYS, *MEASUREMENT_KEYS, *EXECUTOR_KEYS, *HEAT_PUMP_KEYS)
 REQUIRED_KEYS = (CONF_SOC,)
 """Without these the planner cannot run; all other inputs have fallbacks. Without `preise` the prices come
 from the Tibber integration (action tibber.get_prices)."""
 
-OPTION_DEFAULTS = {**DEFAULTS, CONF_FEED_IN_CT: 7.0, CONF_RECORDING: True, CONF_MEASUREMENT: True}
+OPTION_DEFAULTS = {
+    **DEFAULTS,
+    CONF_FEED_IN_CT: 7.0,
+    CONF_RECORDING: True,
+    CONF_MEASUREMENT: True,
+    CONF_WP_MODE_NORMAL: WP_MODE_NORMAL_DEFAULT,
+}
 
 SIGNAL_EXECUTOR = f"{DOMAIN}_executor_update"
 """Dispatcher signal: the executor's state changed (entities update)."""

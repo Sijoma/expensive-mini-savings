@@ -43,8 +43,11 @@ The name is honest: on a 10 kWh battery with a dynamic tariff the savings are re
 5. **Heat pump** (`core/heat_pump.py`). PV boost only with surplus that the battery plan would export.
 
 6. **Executor** (`control.py` rules, `executor.py`). Runs the plan at the inverter depending on the mode, asks
-   for approval by push, measures the savings, keeps a log and learns the load profile. The heat pump is planned
-   only; switching it is left to a separate SG Ready automation.
+   for approval by push, measures the savings, keeps a log and learns the load profile.
+7. **Heat pump PV boost** (`heat_pump_control.py` rules, `heat_pump_executor.py`), optional. Switches SG Ready
+   "boosted" on live PV surplus: export > 1.2 kW or battery charging > 2.5 kW for 10 min, 09:00–16:30,
+   battery > 80 %; off after 5 min of import or battery discharge, at 17:00 at the latest, 30 min pause.
+   Own mode (`Nur planen` / `Automatisch`), never touches a block or a boost it did not set.
 
 ## Layout
 
@@ -56,7 +59,7 @@ custom_components/ems/        the Home Assistant integration (copy this folder t
     optimizer.py              dynamic programming
     explanation.py            blocks, savings, reasons
     forecast.py               DC → AC, spikes
-    heat_pump.py              PV boost
+    heat_pump.py              PV boost (plan)
   adapter.py                  HA states → slots, plan → attributes (no HA import, testable)
   integration.py              setup from configuration.yaml, triggers
   coordinator.py              reads inputs, plans in a worker thread, hourly recording of inputs
@@ -135,7 +138,12 @@ Measurements (always taken per quarter hour for the savings; `messung: true` als
 `last_leistung` (`sensor.load_power`), `pv_leistung` (`sensor.total_dc_power`), `akku_leistung`
 (`sensor.battery_power`, + discharging), `netz_leistung` (`sensor.meter_active_power`, + import), all in W;
 `preis_jetzt` (current price in €/kWh; without it the quarter hour's price from `preise`/Tibber); `ems_modus`, `erzwungen`, `entladen_max` (inverter mode,
-forced mode, discharge limit; Sungrow defaults). `aufzeichnung: true` additionally stores the inputs and the
+forced mode, discharge limit; Sungrow defaults).
+
+Heat pump (optional, no defaults; the EMS switches the PV boost only with `wp_verstaerkt`): `wp_verstaerkt`
+(SG Ready input for boosted operation, Stiebel ISG: input 1), `wp_sperre` (block input, Stiebel: input 2, only
+ever switched off), `wp_sg_ready` (switch enabling SG Ready), `wp_betriebsart` (operating mode select; a boost
+starts only while it is `wp_betriebsart_normal`, default `program`). `aufzeichnung: true` additionally stores the inputs and the
 plan once per hour in `/config/ems/aufzeichnung/`.
 
 The executor keeps only the latest entries in its store (50 log entries, 100 booked actions, 100 forecast
@@ -152,6 +160,8 @@ in the store are written once.
 | `sensor.ems_wert_akku` | value of one kWh in the battery now, ct | – |
 | `sensor.ems_plan_warmepumpe` | `Normal` or `PV-Boost` | `aktionen` (boost periods) |
 | `select.ems_modus_akku` | `Nur planen` / `Mit Freigabe` / `Automatisch` | – |
+| `select.ems_modus_waermepumpe` | heat pump PV boost: `Nur planen` / `Automatisch` (only with `wp_verstaerkt`) | – |
+| `sensor.ems_waermepumpe_soll` | what the boost rules want now (`PV-Boost` / `Normal`) | `ist` (`PV-Boost`, `Normal`, `Gesperrt`, `Nicht erreichbar`), `gesetzt`, `grund`, `modus`, `alte_automation_aktiv` |
 | `sensor.ems_akku_soll` | what runs at the battery now (after mode and approval) | `ist` (inverter), `gesetzt` (last set by the EMS), `plan_aktuell` |
 | `binary_sensor.ems_akku_freigabe_offen` | something waits for approval | `aktionen`, `freigegeben_bis`, `freigegeben`, `freigegeben_kwh` |
 | `button.ems_akku_freigeben`, `button.ems_akku_ablehnen` | approve / reject the next 24 h | services `ems.freigeben`, `ems.ablehnen`, `ems.freigabe_zuruecknehmen` |

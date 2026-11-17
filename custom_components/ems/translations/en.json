@@ -44,7 +44,12 @@
           "ablehnen": "Script: reject",
           "ersparnis": "Measured savings (sensor in EUR, attribute aktionen)",
           "ersparnis_prognose": "Forecast savings (sensor in EUR)",
-          "protokoll": "Log (sensor, attribute eintraege)"
+          "protokoll": "Log (sensor, attribute eintraege)",
+          "wp_sg_ready": "Heat pump: SG Ready enabled (switch)",
+          "wp_verstaerkt": "Heat pump: SG Ready input \"boosted\" (Stiebel: input 1). Without it the EMS does not switch the heat pump",
+          "wp_sperre": "Heat pump: SG Ready input \"block\" (Stiebel: input 2), only ever switched off",
+          "wp_betriebsart": "Heat pump: operating mode (PV boost only in the normal program)",
+          "wp_betriebsart_normal": "Value of the normal operating mode (Stiebel: program)"
         }
       }
     },
@@ -98,7 +103,12 @@
           "ablehnen": "Script: reject",
           "ersparnis": "Measured savings (sensor in EUR, attribute aktionen)",
           "ersparnis_prognose": "Forecast savings (sensor in EUR)",
-          "protokoll": "Log (sensor, attribute eintraege)"
+          "protokoll": "Log (sensor, attribute eintraege)",
+          "wp_sg_ready": "Heat pump: SG Ready enabled (switch)",
+          "wp_verstaerkt": "Heat pump: SG Ready input \"boosted\" (Stiebel: input 1). Without it the EMS does not switch the heat pump",
+          "wp_sperre": "Heat pump: SG Ready input \"block\" (Stiebel: input 2), only ever switched off",
+          "wp_betriebsart": "Heat pump: operating mode (PV boost only in the normal program)",
+          "wp_betriebsart_normal": "Value of the normal operating mode (Stiebel: program)"
         }
       }
     },

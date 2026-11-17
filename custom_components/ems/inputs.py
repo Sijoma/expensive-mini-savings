@@ -10,16 +10,23 @@ from typing import Any
 from homeassistant.core import HomeAssistant, State
 
 from . import control as c
+from . import heat_pump_control as hp
 from .const import (
+    CONF_BATTERY_POWER,
     CONF_CHARGED,
     CONF_CHARGED_PV,
     CONF_CONSUMED,
     CONF_DISCHARGE_MAX,
     CONF_EMS_MODE,
     CONF_FORCED,
+    CONF_GRID_POWER,
     CONF_IMPORTED,
     CONF_PV_POWER,
     CONF_SOC,
+    CONF_WP_BLOCK,
+    CONF_WP_BOOST,
+    CONF_WP_MODE,
+    CONF_WP_MODE_NORMAL,
 )
 from .inverter import NO_VALUE, InverterSetting, classify
 from .measurement import as_number
@@ -85,12 +92,42 @@ class Inputs:
         """Battery state of charge in % of the usable range."""
         return self.number(CONF_SOC)
 
-    def pv_w(self) -> float | None:
-        """PV power now in W (the entity may report kW); None if not configured or no value."""
-        value = self.number(CONF_PV_POWER)
-        if value is not None and self.attribute(CONF_PV_POWER, "unit_of_measurement") == "kW":
+    def power_w(self, key: str) -> float | None:
+        """A power in W (the entity may report kW); None if not configured or no value."""
+        value = self.number(key)
+        if value is not None and self.attribute(key, "unit_of_measurement") == "kW":
             return value * 1000
         return value
+
+    def pv_w(self) -> float | None:
+        return self.power_w(CONF_PV_POWER)
+
+    def switch(self, key: str) -> bool | None:
+        """On/off of a switch; None if not configured or no value."""
+        value = self.value(key)
+        return {"on": True, "off": False}.get(value) if value is not None else None
+
+    def heat_pump(self, now: datetime) -> hp.Readings:
+        """What the heat pump rules read now. A block input that is not configured counts as off."""
+        boost = self.state(CONF_WP_BOOST)
+        required = self.conf.get(CONF_WP_MODE_NORMAL) if self.configured(CONF_WP_MODE) else None
+        return hp.Readings(
+            now=now,
+            grid_w=self.power_w(CONF_GRID_POWER),
+            battery_w=self.power_w(CONF_BATTERY_POWER),
+            soc=self.soc(),
+            boosted=self.switch(CONF_WP_BOOST),
+            blocked=self.switch(CONF_WP_BLOCK) if self.configured(CONF_WP_BLOCK) else False,
+            boosted_changed_at=boost.last_changed if boost else None,
+            operating_mode=self.value(CONF_WP_MODE),
+            operating_mode_required=required,
+        )
+
+    def heat_pump_entities(self) -> list[str]:
+        return [e for k in (CONF_WP_BOOST, CONF_WP_BLOCK) if (e := self.conf.get(k))]
+
+    def power_entities(self) -> list[str]:
+        return [e for k in (CONF_GRID_POWER, CONF_BATTERY_POWER) if (e := self.conf.get(k))]
 
     def consumed_kwh(self) -> float | None:
         """Total house consumption meter (for the load profile)."""

@@ -4,7 +4,8 @@
   "einstellungen": {
    "aufzeichnung": false,
    "einspeisung_ct": 7.0,
-   "messung": true
+   "messung": true,
+   "wp_betriebsart_normal": "program"
   },
   "eintrag": "<entry id>",
   "entitaeten": {

@@ -932,6 +932,54 @@ export class EmsPlanView extends LitElement {
         : html`<div class="muted">Kein Plan.</div>`}`;
   }
 
+  /** Live state and mode of the PV boost (EMS switches it), or the plan's view without heat pump control. */
+  private renderHeatPumpControl(hp: HassEntity | undefined) {
+    const target = configured(this.hass, this.config, "wp_soll");
+    const mode = configured(this.hass, this.config, "wp_modus");
+    if (!available(target) || !mode) {
+      return html`<p style="margin:0 0 10px">
+        ${available(hp) && hp.state === "PV-Boost"
+          ? html`Laut Plan gerade <b>PV-Boost</b>.`
+          : html`Laut Plan gerade Normalbetrieb.`}
+      </p>`;
+    }
+    const ist: string = target.attributes.ist;
+    const automatic = mode.state === "Automatisch";
+    const now: Record<string, unknown> = {
+      "PV-Boost": html`Läuft gerade im <b>PV-Boost</b>.`,
+      Normal: html`Läuft gerade normal.`,
+      Gesperrt: html`<b>Ist gesperrt</b> (SG Ready „Sperre“, nicht vom EMS).`,
+      "Nicht erreichbar": html`Meldet gerade keinen Zustand.`,
+    };
+    const next = automatic ? "Nur planen" : "Automatisch";
+    return html`<p style="margin:0 0 6px">${now[ist] ?? ist}</p>
+      <dl class="facts small">
+        <dt>EMS will</dt>
+        <dd>${target.state}: ${target.attributes.grund}</dd>
+        <dt>Modus</dt>
+        <dd>
+          ${automatic ? "Automatisch: das EMS schaltet den PV-Boost" : "Nur planen: das EMS schaltet nichts"}
+        </dd>
+      </dl>
+      ${target.attributes.alte_automation_aktiv && automatic
+        ? html`<div class="warn">Die alte PV-Boost-Automation ist noch an. Solange schaltet das EMS nicht.</div>`
+        : nothing}
+      <button
+        class="action secondary"
+        style="margin:8px 0 10px"
+        ?disabled=${this.busy}
+        @click=${() =>
+          this.call(
+            "select",
+            "select_option",
+            { entity_id: mode.entity_id, option: next },
+            `Wärmepumpe: Modus „${next}“ ist eingestellt.`,
+          )}
+      >
+        ${automatic ? "Auf „Nur planen“ stellen" : "PV-Boost automatisch schalten"}
+      </button>`;
+  }
+
   private renderBlocks() {
     const plan = sensor(this.hass, this.config, "plan");
     const hp = sensor(this.hass, this.config, "waermepumpe");
@@ -1009,11 +1057,7 @@ export class EmsPlanView extends LitElement {
       </section>
       <section class="card" aria-labelledby="hp-title">
         <h2 id="hp-title"><ha-icon icon="mdi:heat-pump-outline"></ha-icon>Wärmepumpe</h2>
-        <p style="margin:0 0 10px">
-          ${available(hp) && hp.state === "PV-Boost"
-            ? html`Läuft gerade im <b>PV-Boost</b>.`
-            : html`Läuft gerade im Normalbetrieb.`}
-        </p>
+        ${this.renderHeatPumpControl(hp)}
         ${boost.length
           ? html`<ul class="blocks">
               ${boost.map(

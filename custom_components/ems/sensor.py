@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import control as c
+from . import heat_pump_control as hp
 from . import shadow
 from .coordinator import EmsCoordinator
 from .core.explanation import NAMES
@@ -35,6 +36,7 @@ async def async_setup_entry(
             ForecastSensor(executor),
             LogSensor(executor),
             LoadProfileSensor(executor),
+            *([HeatPumpTargetSensor(executor)] if executor.heat_pump else []),
         ]
     )
 
@@ -83,7 +85,8 @@ class ValueSensor(_EmsSensor):
 
 
 class HeatPumpSensor(_EmsSensor):
-    """Heat pump PV boost (planning only; switching is done by a separate SG Ready automation)."""
+    """Heat pump PV boost as forecast by the plan. What is switched follows the live rules
+    (HeatPumpTargetSensor, heat_pump_control.py)."""
 
     _attr_name = "EMS Plan Wärmepumpe"
     _attr_unique_id = "ems_neu_plan_waermepumpe"
@@ -236,3 +239,30 @@ class LoadProfileSensor(ExecutorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"profil": self.executor.settings.load_profile()}
+
+
+class HeatPumpTargetSensor(ExecutorEntity, SensorEntity):
+    """What the heat pump rules want now (PV-Boost / Normal), also in "Nur planen". `ist` is what is set at
+    the heat pump, `gesetzt` whether the EMS switched the boost on, `grund` the rule that decides."""
+
+    _attr_name = "EMS Wärmepumpe Soll"
+    _attr_unique_id = "ems_waermepumpe_soll"
+    entity_id = "sensor.ems_waermepumpe_soll"
+    _attr_icon = "mdi:heat-pump-outline"
+
+    @property
+    def native_value(self) -> str:
+        want, _ = self.executor.heat_pump.wanted()
+        return hp.BOOST if want else hp.NORMAL
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        heat_pump = self.executor.heat_pump
+        _, why = heat_pump.wanted()
+        return {
+            "ist": heat_pump.current(),
+            "gesetzt": bool(heat_pump.state.get("set_by_ems")),
+            "grund": why,
+            "modus": heat_pump.mode,
+            "alte_automation_aktiv": heat_pump.legacy_on(),
+        }

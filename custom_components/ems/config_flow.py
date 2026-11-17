@@ -37,8 +37,14 @@ from .const import (
     CONF_SOC,
     CONF_TARGET,
     CONF_WEAR,
+    CONF_WP_BLOCK,
+    CONF_WP_BOOST,
+    CONF_WP_MODE,
+    CONF_WP_MODE_NORMAL,
+    CONF_WP_SG_READY,
     DOMAIN,
     EXECUTOR_KEYS,
+    HEAT_PUMP_KEYS,
     MEASUREMENT_KEYS,
     OPTION_DEFAULTS,
     PLANNER_KEYS,
@@ -70,6 +76,10 @@ DOMAINS = {
     CONF_CHARGED_PV: ["sensor"],
     CONF_IMPORTED: ["sensor"],
     CONF_CONSUMED: ["sensor"],
+    CONF_WP_SG_READY: ["switch", "input_boolean"],
+    CONF_WP_BOOST: ["switch", "input_boolean"],
+    CONF_WP_BLOCK: ["switch", "input_boolean"],
+    CONF_WP_MODE: ["select", "input_select", "sensor"],
 }
 
 
@@ -90,6 +100,8 @@ def format_settings(conf: dict[str, Any]) -> str:
         *MEASUREMENT_KEYS,
         *EXECUTOR_KEYS,
         CONF_NOTIFY,
+        *HEAT_PUMP_KEYS,
+        CONF_WP_MODE_NORMAL,
     ]
 
     def value(key: str) -> Any:
@@ -127,6 +139,9 @@ def _control_schema() -> vol.Schema:
     fields: dict[Any, Any] = {vol.Optional(CONF_NOTIFY): selector.TextSelector()}
     for key in EXECUTOR_KEYS:
         fields[vol.Optional(key)] = _entity(key)
+    for key in HEAT_PUMP_KEYS:
+        fields[vol.Optional(key)] = _entity(key)
+    fields[vol.Optional(CONF_WP_MODE_NORMAL)] = selector.TextSelector()
     return vol.Schema(fields)
 
 

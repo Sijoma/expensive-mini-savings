@@ -34,6 +34,7 @@ from .const import (
     CONF_TARGET,
     CONF_WEAR,
     CONF_WEAR_CT,
+    CONF_WP_MODE_NORMAL,
     DEFAULTS,
     DOMAIN,
     ENTITY_KEYS,
@@ -42,6 +43,7 @@ from .const import (
     LEGACY_CONTROL_KEYS,
     WEAR_CT_MAX,
     WEAR_CT_MIN,
+    WP_MODE_NORMAL_DEFAULT,
     external_input,
 )
 from .coordinator import EmsCoordinator
@@ -82,6 +84,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_RECORDING, default=True): cv.boolean,
                 vol.Optional(CONF_MEASUREMENT, default=True): cv.boolean,
                 vol.Optional(CONF_NOTIFY): cv.string,
+                vol.Optional(CONF_WP_MODE_NORMAL, default=WP_MODE_NORMAL_DEFAULT): cv.string,
                 vol.Optional(CONF_WEAR_CT): vol.All(
                     vol.Coerce(float), vol.Range(min=WEAR_CT_MIN, max=WEAR_CT_MAX)
                 ),
