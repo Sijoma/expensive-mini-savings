@@ -58,8 +58,9 @@ _LOGGER = logging.getLogger(__name__)
 STORE_VERSION = 1
 STORE_KEY = f"{DOMAIN}.steuerung"
 TAKEOVER_FILE = ("ems", "uebernahme.json")
-CONFIRM_S = 60
-"""Every command is checked after this long."""
+CONFIRM_S = 120
+"""Every command is checked after this long. A Modbus write that gets no answer is retried after the
+hub's 30 s timeout: the inverter then reports the change after about 62 s (seen 15.–18.11.2026)."""
 LOG_MAX = 50
 FORECAST_DAYS = 100
 SAVINGS_MAX = 100

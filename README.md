@@ -143,7 +143,8 @@ forced mode, discharge limit; Sungrow defaults).
 Heat pump (optional, no defaults; the EMS switches the PV boost only with `wp_verstaerkt`): `wp_verstaerkt`
 (SG Ready input for boosted operation, Stiebel ISG: input 1), `wp_sperre` (block input, Stiebel: input 2, only
 ever switched off), `wp_sg_ready` (switch enabling SG Ready), `wp_betriebsart` (operating mode select; a boost
-starts only while it is `wp_betriebsart_normal`, default `program`). `aufzeichnung: true` additionally stores the inputs and the
+starts only while it is `wp_betriebsart_normal`, default `program`). With `wp_verstaerkt` each measured quarter
+hour also has `wp_boost_s`, the seconds the boost input was on. `aufzeichnung: true` additionally stores the inputs and the
 plan once per hour in `/config/ems/aufzeichnung/`.
 
 The executor keeps only the latest entries in its store (50 log entries, 100 booked actions, 100 forecast
@@ -175,7 +176,7 @@ in the store are written once.
 keeps charging), or forced mode + stop while there is no PV surplus (about 40 W less from the grid on the
 author's SH15T; PV minus consumption below 50 W, back from 150 W, at least 15 min each, needs `pv_leistung`
 and `last_leistung`); grid charge = forced mode, forced charge at the grid charge power; normal = self-consumption
-with the discharge limit back at its maximum. Every command is checked after 60 s. Blocks are run from 30 min
+with the discharge limit back at its maximum. Every command is checked after 120 s. Blocks are run from 30 min
 (hold) / 15 min (grid charge) and 5 ct savings, grid charging stops at 98 %, a plan older than 30 min means
 normal operation.
 

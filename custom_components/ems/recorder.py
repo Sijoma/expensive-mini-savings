@@ -22,9 +22,10 @@ from .const import (
     CONF_GRID_POWER,
     CONF_LOAD_POWER,
     CONF_PV_POWER,
+    CONF_WP_BOOST,
 )
 from .inputs import Inputs
-from .measurement import MeasurementWriter
+from .measurement import BOOST, MeasurementWriter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class MeasurementRecorder:
                 (conf.get(CONF_PV_POWER), "pv"),
                 (conf.get(CONF_BATTERY_POWER), "akku"),
                 (conf.get(CONF_GRID_POWER), "netz"),
+                (conf.get(CONF_WP_BOOST), BOOST),
             )
             if entity_id
         }
@@ -70,7 +72,7 @@ class MeasurementRecorder:
         for eid, name in self.names.items():
             z = self.hass.states.get(eid)
             if z is not None:
-                self.writer.value(name, now, z.state)
+                self.writer.value(name, now, self._number(name, z.state))
         self._on_quarter_start()
         self._on_mid()
         self._unsubscribe = [
@@ -108,7 +110,15 @@ class MeasurementRecorder:
         new = event.data["new_state"]
         if new is None:
             return
-        self._finished(self.writer.value(self.names[event.data["entity_id"]], new.last_updated, new.state))
+        name = self.names[event.data["entity_id"]]
+        self._finished(self.writer.value(name, new.last_updated, self._number(name, new.state)))
+
+    @staticmethod
+    def _number(name: str, state: str) -> Any:
+        """The boost switch as 1/0 (unavailable stays invalid: the last value holds); powers unchanged."""
+        if name == BOOST:
+            return {"on": 1, "off": 0}.get(state)
+        return state
 
     @callback
     def _on_boundary(self, now: Any) -> None:

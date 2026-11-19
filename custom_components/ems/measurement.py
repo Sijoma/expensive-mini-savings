@@ -17,6 +17,8 @@ QUARTER = timedelta(minutes=15)
 
 POWERS = ("last", "pv", "akku", "netz")
 """load, pv (DC), battery (+ discharging / − charging), grid (+ import / − export); all in W."""
+BOOST = "wp"
+"""Heat pump SG Ready input 1 (boost): 1 on, 0 off. Only measured when configured."""
 
 
 def as_number(value: Any, default: float | None = None) -> float | None:
@@ -54,6 +56,8 @@ class Quarter:
     charged: float = 0.0
     grid_import: float = 0.0
     grid_export: float = 0.0
+    boost_s: float | None = None
+    """Seconds the heat pump boost input was on; None if it is not measured."""
     extra_info: dict[str, Any] = field(default_factory=dict)
     """soc_percent, price_ct (at the start), action and plan_action/plan_soc_percent (middle): what was set
     at the inverter and what the plan valid at that moment wanted."""
@@ -69,11 +73,14 @@ class Quarter:
         self.charged += max(-battery, 0.0) * h
         self.grid_import += max(grid, 0.0) * h
         self.grid_export += max(-grid, 0.0) * h
+        if BOOST in w:
+            self.boost_s = (self.boost_s or 0.0) + (duration_s if w[BOOST] > 0 else 0.0)
 
     def as_dict(self, end: datetime, tz: tzinfo | None = None) -> dict[str, Any]:
-        """Same fields as backtest/data/*.json (German keys, data format), plus covered seconds."""
+        """Same fields as backtest/data/*.json (German keys, data format), plus covered seconds and, if
+        measured, the seconds of heat pump boost."""
         h = QUARTER.total_seconds() / 3600
-        return {
+        record = {
             "start": self.start.astimezone(tz).isoformat(),
             "preis_ct": self.extra_info.get("price_ct"),
             "pv_kw": round(self.pv / h, 3),
@@ -90,6 +97,9 @@ class Quarter:
             "plan_soc_prozent": self.extra_info.get("plan_soc_percent"),
             "abgedeckt_s": round((end - self.since).total_seconds()),
         }
+        if self.boost_s is not None:
+            record["wp_boost_s"] = round(self.boost_s)
+        return record
 
 
 class MeasurementWriter:

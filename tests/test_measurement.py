@@ -149,3 +149,19 @@ def test_matches_fine_sampling(events):
         assert v["bezug_brutto_kwh"] == pytest.approx(z["bezug"], abs=1e-4)
         assert v["akku_entladen_kwh"] == pytest.approx(z["entladen"], abs=1e-4)
         assert v["netz_einspeisung_kwh"] == pytest.approx(z["netz_e"], abs=1e-4)
+
+
+def test_boost_seconds_only_when_measured():
+    """Boost on for 5 of 15 min, unavailable in between keeps the last value; absent without the input."""
+    m = MeasurementWriter(T0)
+    m.value("last", T0, 500)
+    m.value("wp", T0, 0)
+    m.value("wp", T0 + timedelta(minutes=5), 1)
+    m.value("wp", T0 + timedelta(minutes=7), None)  # unavailable
+    m.value("wp", T0 + timedelta(minutes=10), 0)
+    (v,) = m.boundary(T0 + timedelta(minutes=15))
+    assert v["wp_boost_s"] == 300
+    plain = MeasurementWriter(T0)
+    plain.value("last", T0, 500)
+    (w,) = plain.boundary(T0 + timedelta(minutes=15))
+    assert "wp_boost_s" not in w

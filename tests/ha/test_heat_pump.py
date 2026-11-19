@@ -241,3 +241,27 @@ async def test_without_heat_pump_keys_nothing_is_created(hass, set_states, tmp_p
     assert entry.runtime_data.executor.heat_pump is None
     assert hass.states.get("select.ems_modus_waermepumpe") is None
     assert hass.states.get("sensor.ems_waermepumpe_soll") is None
+
+
+async def test_measurement_records_boost_seconds(hass, isg, freezer):
+    """The recorder integrates the boost input like a power: 5 of 15 min on (unavailable holds)."""
+    from custom_components.ems.inputs import Inputs
+    from custom_components.ems.recorder import MeasurementRecorder
+
+    freezer.move_to("2026-11-17T12:00:00+01:00")
+    conf = {"wp_verstaerkt": BOOST, "netz_leistung": GRID}
+    hass.states.async_set(GRID, "0", {"unit_of_measurement": "W"})
+    records: list[dict] = []
+    rec = MeasurementRecorder(
+        hass, conf, Inputs(hass, conf), lambda: 30.0, lambda _: ("n", 50), records.extend, write_files=False
+    )
+    rec.begin()
+    for minutes, state in ((5, "on"), (2, "unavailable"), (3, "off"), (5, None)):
+        freezer.tick(timedelta(minutes=minutes))
+        if state:
+            hass.states.async_set(BOOST, state)
+            await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    rec.stop()
+    assert records[0]["wp_boost_s"] == 300
